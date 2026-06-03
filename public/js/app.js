@@ -465,46 +465,141 @@ function renderLesson(course, index) {
 
   // --- Audio player ---
   const audioUrl = api.lessonAudioUrl(course.id, index);
+  const posKey = `figaro.playpos.${course.id}.${index}`;
   const audio = new Audio();
 
-  const player = el('div', { class: 'player' });
-  const playBtn = el('button', { class: 'player__btn', html: '&#9654;', title: 'Play' });
-  const restartBtn = el('button', { class: 'player__btn player__small', html: '&#8635;', title: 'Restart' });
-  const status = el('div', { class: 'player__status', text: 'Tap play to hear the lecture' });
-  const barFill = el('i');
-  const meta = el('div', { class: 'player__meta' }, status, el('div', { class: 'player__bar' }, barFill));
-  player.appendChild(el('div', { class: 'player__row' }, playBtn, restartBtn, meta));
-  mount.appendChild(player);
-
-  function updateBar() {
-    if (audio.duration) barFill.style.width = `${Math.round((audio.currentTime / audio.duration) * 100)}%`;
+  function formatTime(s) {
+    if (!isFinite(s) || s < 0) return '0:00';
+    const m = Math.floor(s / 60);
+    return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   }
 
-  audio.addEventListener('timeupdate', updateBar);
+  const player    = el('div', { class: 'player' });
+  const playBtn   = el('button', { class: 'player__btn',               html: '&#9654;',      title: 'Play / pause' });
+  const rewindBtn = el('button', { class: 'player__btn player__small', html: '&#8630;',      title: 'Rewind 30 seconds' });
+  const fromTopBtn= el('button', { class: 'player__btn player__small', html: '&#8635;',      title: 'Start from beginning' });
+  const status    = el('div',    { class: 'player__status',            text: 'Tap play to hear the lecture' });
+  const timeLeft  = el('div',    { class: 'player__timeleft',          text: '' });
+
+  // Scrubber: a range input styled to look like the progress bar.
+  const scrubber  = el('input',  { class: 'player__scrubber', type: 'range', min: '0', max: '100', step: '0.1', value: '0' });
+
+  const meta = el('div', { class: 'player__meta' },
+    el('div', { class: 'player__statusrow' }, status, timeLeft),
+    scrubber,
+  );
+  player.appendChild(el('div', { class: 'player__row' }, playBtn, rewindBtn, fromTopBtn, meta));
+  mount.appendChild(player);
+
+  // Track whether the user is actively dragging so we don't fight timeupdate.
+  let scrubbing = false;
+  // Set to true only until the very first canplay, for restoring saved position.
+  let pendingResume = true;
+
+  function syncScrubber() {
+    if (scrubbing || !audio.duration) return;
+    const pct = (audio.currentTime / audio.duration) * 100;
+    scrubber.value = pct;
+    scrubber.style.setProperty('--pct', `${pct.toFixed(2)}%`);
+  }
+
+  function syncTimeLeft() {
+    if (!audio.duration) return;
+    const rem = audio.duration - audio.currentTime;
+    timeLeft.textContent = rem > 0 ? `-${formatTime(rem)}` : '';
+  }
+
+  audio.addEventListener('timeupdate', () => {
+    syncScrubber();
+    syncTimeLeft();
+    if (Math.round(audio.currentTime) % 5 === 0) {
+      sessionStorage.setItem(posKey, audio.currentTime);
+    }
+  });
+  audio.addEventListener('durationchange', () => {
+    syncScrubber();
+    syncTimeLeft();
+  });
   audio.addEventListener('playing', () => {
     playBtn.innerHTML = '&#10073;&#10073;';
-    status.textContent = 'Now playing…';
+    status.textContent = 'Now playing\u2026';
   });
   audio.addEventListener('pause', () => {
     playBtn.innerHTML = '&#9654;';
-    status.textContent = audio.currentTime > 0 ? 'Paused' : 'Tap play to hear the lecture';
+    sessionStorage.setItem(posKey, audio.currentTime);
+    if (!scrubbing) {
+      status.textContent = audio.currentTime > 0 ? 'Paused' : 'Tap play to hear the lecture';
+    }
   });
   audio.addEventListener('ended', () => {
     playBtn.innerHTML = '&#9654;';
-    status.textContent = 'Finished — ready for the quiz';
-    barFill.style.width = '100%';
+    sessionStorage.removeItem(posKey);
+    status.textContent = 'Finished \u2014 ready for the quiz';
+    scrubber.value = '100';
+    scrubber.style.setProperty('--pct', '100%');
+    timeLeft.textContent = '';
   });
-  audio.addEventListener('waiting', () => { status.textContent = 'Loading audio…'; });
-  audio.addEventListener('error', () => { status.textContent = 'Audio unavailable — read the transcript below.'; });
+  // canplay fires on first load and after every seek — only restore saved
+  // position on the very first fire, then ignore it.
+  audio.addEventListener('canplay', () => {
+    if (!pendingResume) return;
+    pendingResume = false;
+    const saved = parseFloat(sessionStorage.getItem(posKey));
+    if (saved > 0 && saved < audio.duration) {
+      audio.currentTime = saved;
+      status.textContent = `Resuming from ${formatTime(saved)}\u2026`;
+      syncScrubber();
+      syncTimeLeft();
+    }
+  });
+  // Only show 'loading' when not mid-scrub, to avoid the flashing loop.
+  audio.addEventListener('waiting', () => {
+    if (!scrubbing) status.textContent = 'Loading audio\u2026';
+  });
+  audio.addEventListener('error', () => {
+    status.textContent = 'Audio unavailable \u2014 read the transcript below.';
+  });
+
+  // Scrubber interaction.
+  scrubber.addEventListener('mousedown',  () => { scrubbing = true; });
+  scrubber.addEventListener('touchstart', () => { scrubbing = true; }, { passive: true });
+  scrubber.addEventListener('input', () => {
+    scrubber.style.setProperty('--pct', `${parseFloat(scrubber.value).toFixed(2)}%`);
+    if (audio.duration) {
+      const preview = (scrubber.value / 100) * audio.duration;
+      timeLeft.textContent = `-${formatTime(audio.duration - preview)}`;
+    }
+  });
+  scrubber.addEventListener('change', () => {
+    // Remember whether audio was playing before we release the scrubber.
+    const wasPlaying = !audio.paused;
+    scrubbing = false;
+    if (audio.duration) {
+      ensureSrc();
+      audio.currentTime = (scrubber.value / 100) * audio.duration;
+      scrubber.style.setProperty('--pct', `${parseFloat(scrubber.value).toFixed(2)}%`);
+      // Only auto-play if it was already playing; don't start playback from a paused state.
+      if (wasPlaying) audio.play();
+    }
+  });
+
+  function ensureSrc() { if (!audio.src) audio.src = audioUrl; }
 
   playBtn.onclick = () => {
-    if (!audio.src) audio.src = audioUrl;
-    if (audio.paused) audio.play();
-    else audio.pause();
+    ensureSrc();
+    if (audio.paused) audio.play(); else audio.pause();
   };
-  restartBtn.onclick = () => {
-    if (!audio.src) audio.src = audioUrl;
+  rewindBtn.onclick = () => {
+    ensureSrc();
+    audio.currentTime = Math.max(0, audio.currentTime - 30);
+    if (audio.paused && audio.currentTime > 0) audio.play();
+  };
+  fromTopBtn.onclick = () => {
+    ensureSrc();
+    sessionStorage.removeItem(posKey);
     audio.currentTime = 0;
+    scrubber.value = '0';
+    scrubber.style.setProperty('--pct', '0%');
     audio.play();
   };
 
@@ -512,17 +607,21 @@ function renderLesson(course, index) {
   if ('mediaSession' in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({
       title: lesson.title,
-      artist: `Figaro · Lesson ${index + 1} of ${course.lessons.length}`,
+      artist: `Figaro \u00b7 Lesson ${index + 1} of ${course.lessons.length}`,
       album: course.title,
     });
-    navigator.mediaSession.setActionHandler('play', () => audio.play());
-    navigator.mediaSession.setActionHandler('pause', () => audio.pause());
-    navigator.mediaSession.setActionHandler('stop', () => { audio.pause(); audio.currentTime = 0; });
-    navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime = Math.max(0, audio.currentTime - 15); });
-    navigator.mediaSession.setActionHandler('seekforward', () => { audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 30); });
+    navigator.mediaSession.setActionHandler('play',         () => audio.play());
+    navigator.mediaSession.setActionHandler('pause',        () => audio.pause());
+    navigator.mediaSession.setActionHandler('stop',         () => { audio.pause(); audio.currentTime = 0; });
+    navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime = Math.max(0, audio.currentTime - 30); });
+    navigator.mediaSession.setActionHandler('seekforward',  () => { audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 30); });
   }
 
-  setCleanup(() => { audio.pause(); audio.src = ''; });
+  setCleanup(() => {
+    sessionStorage.setItem(posKey, audio.currentTime);
+    audio.pause();
+    audio.src = '';
+  });
 
   // --- Transcript ---
   const details = el('details', { class: 'transcript' });

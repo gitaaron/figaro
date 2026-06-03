@@ -309,9 +309,63 @@ p { margin: 0 0 1em; }
 }
 .player__small:hover { background: rgba(255,255,255,.22); }
 .player__meta { flex: 1; min-width: 0; }
+.player__statusrow { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 .player__status { font-style: italic; color: #e9dcc4; font-size: 14px; }
-.player__bar { height: 5px; border-radius: 999px; background: rgba(255,255,255,.18); margin-top: 9px; overflow: hidden; }
-.player__bar > i { display: block; height: 100%; width: 0; background: var(--gold); border-radius: 999px; transition: width .25s linear; }
+.player__timeleft { font-size: 13px; color: var(--gold); font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
+
+/* Scrubber — range input styled to match the dark player aesthetic */
+.player__scrubber {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 20px;        /* tall hit-target for touch */
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+}
+/* The track */
+.player__scrubber::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.18);
+}
+.player__scrubber::-moz-range-track {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.18);
+}
+/* Filled portion (Chrome/Safari via gradient trick) */
+.player__scrubber {
+  --pct: 0%;
+  background: linear-gradient(
+    to right,
+    var(--gold) 0%,
+    var(--gold) var(--pct),
+    rgba(255,255,255,.18) var(--pct),
+    rgba(255,255,255,.18) 100%
+  ) no-repeat center / 100% 5px;
+}
+/* The thumb */
+.player__scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.5);
+  margin-top: -5.5px;   /* center on 5px track */
+  transition: transform .1s ease;
+}
+.player__scrubber::-moz-range-thumb {
+  width: 16px; height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.5);
+}
+.player__scrubber:active::-webkit-slider-thumb { transform: scale(1.3); }
+.player__scrubber:active::-moz-range-thumb     { transform: scale(1.3); }
 
 .transcript {
   margin-top: 16px; border: 1px solid var(--line); border-radius: var(--radius-s);
