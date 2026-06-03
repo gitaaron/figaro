@@ -387,16 +387,7 @@ async function eagerGenerate(course) {
       continue;
     }
 
-    if (cancelled) return;
-
-    // Warm the audio cache for this lesson in the background.
-    setStep(`Generating audio for lesson ${i + 1} of ${total}…`, i);
-    try {
-      await fetch(api.lessonAudioUrl(course.id, i));
-    } catch {
-      // Audio generation failure is non-fatal.
-    }
-
+    // Audio is now warmed server-side automatically after generateLesson.
     setStep(`Lesson ${i + 1} of ${total} ready`, i + 1);
   }
 

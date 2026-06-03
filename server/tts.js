@@ -1,24 +1,26 @@
 'use strict';
 
 /**
- * tts.js — server-side text-to-speech.
+ * tts.js — server-side text-to-speech with streaming + disk caching.
  *
  * Provider is selected by TTS_PROVIDER in .env:
  *   gtts       — Google TTS via Python's gTTS library (no API key needed)
  *   openai     — OpenAI TTS API  (requires OPENAI_API_KEY)
  *   elevenlabs — ElevenLabs API  (requires ELEVENLABS_API_KEY)
  *
- * Generated audio is cached as MP3 at:
- *   data/audio/<courseId>/<lessonIndex>.mp3
+ * On the first request for a lesson the audio is generated and simultaneously
+ * streamed to the HTTP response and written to disk. The browser starts
+ * receiving audio bytes immediately — it doesn't wait for generation to finish.
  *
- * Re-uses the cached file on subsequent requests.
+ * Subsequent requests are served straight from the cached file.
+ *
+ * Cache location: data/audio/<courseId>/<lessonIndex>.mp3
  */
 
-const fs = require('fs');
+const fs   = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 const https = require('https');
-const http = require('http');
 
 const DATA_DIR = path.join(__dirname, '..', 'data', 'audio');
 
@@ -27,7 +29,7 @@ function ensureDir(dir) {
 }
 
 function audioPath(courseId, lessonIndex) {
-  const safeId = String(courseId).replace(/[^a-z0-9]/gi, '');
+  const safeId  = String(courseId).replace(/[^a-z0-9]/gi, '');
   const safeIdx = String(Number(lessonIndex));
   const dir = path.join(DATA_DIR, safeId);
   ensureDir(dir);
@@ -35,35 +37,35 @@ function audioPath(courseId, lessonIndex) {
 }
 
 function isCached(filePath) {
-  try {
-    return fs.statSync(filePath).size > 0;
-  } catch {
-    return false;
-  }
+  try { return fs.statSync(filePath).size > 0; } catch { return false; }
 }
 
+// In-flight generation promises keyed by filePath.
+// Multiple simultaneous requests for the same lesson wait on the same promise
+// instead of spawning duplicate generation jobs.
+const inFlight = new Map();
+
 // ---------------------------------------------------------------------------
-// Provider: gTTS (Google TTS via Python)
+// Provider: gTTS
+// gTTS writes the whole file before we can stream it, so we generate to a
+// temp path, then stream from disk once done. Still faster than buffering
+// everything in memory first.
 // ---------------------------------------------------------------------------
 function generateGtts(text, outPath) {
   return new Promise((resolve, reject) => {
-    // Write text to a temp file to avoid shell-injection / length limits.
-    const tmpText = outPath + '.txt';
+    const tmpText   = outPath + '.txt';
+    const tmpScript = outPath + '.py';
     fs.writeFileSync(tmpText, text, 'utf8');
-
-    const script = `
+    fs.writeFileSync(tmpScript, `
 import sys
 from gtts import gTTS
 text = open(sys.argv[1], encoding='utf-8').read()
 tts = gTTS(text=text, lang='en', slow=False)
 tts.save(sys.argv[2])
-`.trim();
+`.trim(), 'utf8');
 
-    const tmpScript = outPath + '.py';
-    fs.writeFileSync(tmpScript, script, 'utf8');
-
-    execFile('python3', [tmpScript, tmpText, outPath], { timeout: 60000 }, (err) => {
-      try { fs.unlinkSync(tmpText); } catch {}
+    execFile('python3', [tmpScript, tmpText, outPath], { timeout: 120000 }, (err) => {
+      try { fs.unlinkSync(tmpText);   } catch {}
       try { fs.unlinkSync(tmpScript); } catch {}
       if (err) return reject(new Error(`gTTS failed: ${err.message}`));
       resolve();
@@ -72,96 +74,113 @@ tts.save(sys.argv[2])
 }
 
 // ---------------------------------------------------------------------------
-// Provider: OpenAI TTS
+// Helpers for streaming providers (OpenAI, ElevenLabs)
+//
+// streamToFileAndResponse pipes the TTS HTTP response body to:
+//   1. A write stream → disk cache
+//   2. The Express response → browser (starts playing immediately)
 // ---------------------------------------------------------------------------
-async function generateOpenAI(text, outPath) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error('OPENAI_API_KEY is not set.');
+function streamToFileAndResponse(ttsRes, filePath, expressRes) {
+  return new Promise((resolve, reject) => {
+    const fileStream = fs.createWriteStream(filePath);
 
-  const model = process.env.OPENAI_TTS_MODEL || 'tts-1';
-  const voice = process.env.OPENAI_TTS_VOICE || 'alloy';
+    ttsRes.on('data', (chunk) => {
+      fileStream.write(chunk);
+      // Only forward to client if it's still connected.
+      if (!expressRes.writableEnded) expressRes.write(chunk);
+    });
 
-  const body = JSON.stringify({ model, input: text, voice });
+    ttsRes.on('end', () => {
+      fileStream.end();
+      if (!expressRes.writableEnded) expressRes.end();
+      resolve();
+    });
 
-  const data = await new Promise((resolve, reject) => {
-    const req = https.request(
-      {
-        hostname: 'api.openai.com',
-        path: '/v1/audio/speech',
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-        },
-      },
-      (res) => {
-        if (res.statusCode !== 200) {
-          let errBody = '';
-          res.on('data', (c) => { errBody += c; });
-          res.on('end', () => reject(new Error(`OpenAI TTS error ${res.statusCode}: ${errBody}`)));
-          return;
-        }
-        const chunks = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => resolve(Buffer.concat(chunks)));
-      }
-    );
-    req.on('error', reject);
-    req.write(body);
-    req.end();
+    ttsRes.on('error', (err) => {
+      fileStream.destroy(err);
+      reject(err);
+    });
+
+    fileStream.on('error', reject);
   });
-
-  fs.writeFileSync(outPath, data);
 }
 
 // ---------------------------------------------------------------------------
-// Provider: ElevenLabs
+// Provider: OpenAI TTS (true streaming)
 // ---------------------------------------------------------------------------
-async function generateElevenLabs(text, outPath) {
-  const apiKey = process.env.ELEVENLABS_API_KEY;
-  if (!apiKey) throw new Error('ELEVENLABS_API_KEY is not set.');
-
-  const voiceId = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL'; // "Sarah"
-  const model = process.env.ELEVENLABS_MODEL || 'eleven_turbo_v2';
+function streamOpenAI(text, filePath, expressRes) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return Promise.reject(new Error('OPENAI_API_KEY is not set.'));
 
   const body = JSON.stringify({
-    text,
-    model_id: model,
-    voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+    model: process.env.OPENAI_TTS_MODEL || 'tts-1',
+    input: text,
+    voice: process.env.OPENAI_TTS_VOICE || 'alloy',
   });
 
-  const data = await new Promise((resolve, reject) => {
-    const req = https.request(
-      {
-        hostname: 'api.elevenlabs.io',
-        path: `/v1/text-to-speech/${voiceId}`,
-        method: 'POST',
-        headers: {
-          'xi-api-key': apiKey,
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-          Accept: 'audio/mpeg',
-        },
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.openai.com',
+      path: '/v1/audio/speech',
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
       },
-      (res) => {
-        if (res.statusCode !== 200) {
-          let errBody = '';
-          res.on('data', (c) => { errBody += c; });
-          res.on('end', () => reject(new Error(`ElevenLabs error ${res.statusCode}: ${errBody}`)));
-          return;
-        }
-        const chunks = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => resolve(Buffer.concat(chunks)));
+    }, (ttsRes) => {
+      if (ttsRes.statusCode !== 200) {
+        let errBody = '';
+        ttsRes.on('data', (c) => { errBody += c; });
+        ttsRes.on('end', () => reject(new Error(`OpenAI TTS error ${ttsRes.statusCode}: ${errBody}`)));
+        return;
       }
-    );
+      streamToFileAndResponse(ttsRes, filePath, expressRes).then(resolve, reject);
+    });
     req.on('error', reject);
     req.write(body);
     req.end();
   });
+}
 
-  fs.writeFileSync(outPath, data);
+// ---------------------------------------------------------------------------
+// Provider: ElevenLabs (true streaming)
+// ---------------------------------------------------------------------------
+function streamElevenLabs(text, filePath, expressRes) {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) return Promise.reject(new Error('ELEVENLABS_API_KEY is not set.'));
+
+  const voiceId = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL';
+  const body = JSON.stringify({
+    text,
+    model_id: process.env.ELEVENLABS_MODEL || 'eleven_turbo_v2',
+    voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+  });
+
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.elevenlabs.io',
+      path: `/v1/text-to-speech/${voiceId}`,
+      method: 'POST',
+      headers: {
+        'xi-api-key': apiKey,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        Accept: 'audio/mpeg',
+      },
+    }, (ttsRes) => {
+      if (ttsRes.statusCode !== 200) {
+        let errBody = '';
+        ttsRes.on('data', (c) => { errBody += c; });
+        ttsRes.on('end', () => reject(new Error(`ElevenLabs error ${ttsRes.statusCode}: ${errBody}`)));
+        return;
+      }
+      streamToFileAndResponse(ttsRes, filePath, expressRes).then(resolve, reject);
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -177,54 +196,134 @@ function resolveProvider() {
 }
 
 /**
- * Returns the path to the cached MP3, generating it first if needed.
- * Throws on generation failure.
+ * Stream audio to `expressRes`, generating and caching it on first call.
+ *
+ * For streaming providers (openai, elevenlabs) the response headers are sent
+ * here and bytes flow as they arrive from the TTS API.
+ *
+ * For gTTS the file is generated first (unavoidable — it's a subprocess), then
+ * streamed from disk.
+ *
+ * Concurrent requests for the same lesson share one in-flight generation.
  */
-async function getAudio(courseId, lessonIndex, text) {
+async function streamAudio(courseId, lessonIndex, text, expressRes) {
   const filePath = audioPath(courseId, lessonIndex);
+  const provider = resolveProvider();
 
+  // Cache hit — serve straight from disk.
   if (isCached(filePath)) {
-    return filePath;
+    expressRes.setHeader('Content-Type', 'audio/mpeg');
+    expressRes.setHeader('Cache-Control', 'public, max-age=86400');
+    fs.createReadStream(filePath).pipe(expressRes);
+    return;
   }
 
-  const provider = resolveProvider();
+  // If another request is already generating this file, wait for it then
+  // serve from disk (the generating request handles its own response).
+  if (inFlight.has(filePath)) {
+    try {
+      await inFlight.get(filePath);
+    } catch {
+      // Generation failed for the other request; try again for this one.
+    }
+    if (isCached(filePath)) {
+      expressRes.setHeader('Content-Type', 'audio/mpeg');
+      expressRes.setHeader('Cache-Control', 'public, max-age=86400');
+      fs.createReadStream(filePath).pipe(expressRes);
+    } else {
+      expressRes.status(502).json({ error: 'Audio generation failed.' });
+    }
+    return;
+  }
+
   console.log(`[tts] generating audio via ${provider} for course=${courseId} lesson=${lessonIndex}`);
 
-  switch (provider) {
-    case 'gtts':
-      await generateGtts(text, filePath);
-      break;
-    case 'openai':
-      await generateOpenAI(text, filePath);
-      break;
-    case 'elevenlabs':
-      await generateElevenLabs(text, filePath);
-      break;
+  // Send headers before we start so the browser can begin buffering.
+  expressRes.setHeader('Content-Type', 'audio/mpeg');
+  expressRes.setHeader('Cache-Control', 'public, max-age=86400');
+
+  let generationPromise;
+
+  if (provider === 'gtts') {
+    // gTTS: generate to disk, then stream the file.
+    generationPromise = generateGtts(text, filePath).then(() => {
+      if (!expressRes.writableEnded) {
+        fs.createReadStream(filePath).pipe(expressRes);
+      }
+    });
+  } else if (provider === 'openai') {
+    generationPromise = streamOpenAI(text, filePath, expressRes);
+  } else {
+    generationPromise = streamElevenLabs(text, filePath, expressRes);
   }
 
-  if (!isCached(filePath)) {
-    throw new Error('TTS generated an empty file.');
-  }
+  inFlight.set(filePath, generationPromise);
 
-  console.log(`[tts] saved ${filePath}`);
-  return filePath;
+  try {
+    await generationPromise;
+    console.log(`[tts] saved ${filePath}`);
+  } catch (err) {
+    // Clean up partial file so a retry starts fresh.
+    try { fs.unlinkSync(filePath); } catch {}
+    if (!expressRes.headersSent) {
+      expressRes.status(502).json({ error: `TTS generation failed: ${err.message}` });
+    } else if (!expressRes.writableEnded) {
+      expressRes.end();
+    }
+    throw err;
+  } finally {
+    inFlight.delete(filePath);
+  }
 }
 
 /**
- * Delete cached audio for a lesson (e.g. when lesson is regenerated).
+ * Pre-warm the audio cache for a lesson without streaming to any client.
+ * Safe to call fire-and-forget — logs but does not throw.
  */
-function deleteAudio(courseId, lessonIndex) {
+async function warmAudio(courseId, lessonIndex, text) {
   const filePath = audioPath(courseId, lessonIndex);
-  try { fs.unlinkSync(filePath); } catch {}
+  if (isCached(filePath) || inFlight.has(filePath)) return;
+
+  const provider = resolveProvider();
+  console.log(`[tts] warming audio via ${provider} for course=${courseId} lesson=${lessonIndex}`);
+
+  let generationPromise;
+
+  if (provider === 'gtts') {
+    generationPromise = generateGtts(text, filePath);
+  } else if (provider === 'openai') {
+    // Use a PassThrough sink so streamOpenAI has somewhere to write
+    // while we discard the bytes (they're already going to disk via fileStream).
+    const { PassThrough } = require('stream');
+    const sink = new PassThrough();
+    sink.resume(); // drain
+    generationPromise = streamOpenAI(text, filePath, sink);
+  } else {
+    const { PassThrough } = require('stream');
+    const sink = new PassThrough();
+    sink.resume();
+    generationPromise = streamElevenLabs(text, filePath, sink);
+  }
+
+  inFlight.set(filePath, generationPromise);
+  try {
+    await generationPromise;
+    console.log(`[tts] warmed ${filePath}`);
+  } catch (err) {
+    console.error(`[tts] warm failed for course=${courseId} lesson=${lessonIndex}:`, err.message);
+    try { fs.unlinkSync(filePath); } catch {}
+  } finally {
+    inFlight.delete(filePath);
+  }
 }
 
-/**
- * Delete all cached audio for a course.
- */
+function deleteAudio(courseId, lessonIndex) {
+  try { fs.unlinkSync(audioPath(courseId, lessonIndex)); } catch {}
+}
+
 function deleteCourseAudio(courseId) {
   const safeId = String(courseId).replace(/[^a-z0-9]/gi, '');
-  const dir = path.join(DATA_DIR, safeId);
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(path.join(DATA_DIR, safeId), { recursive: true, force: true }); } catch {}
 }
 
-module.exports = { getAudio, deleteAudio, deleteCourseAudio, resolveProvider };
+module.exports = { streamAudio, warmAudio, deleteAudio, deleteCourseAudio, resolveProvider };

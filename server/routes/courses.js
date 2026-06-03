@@ -154,6 +154,9 @@ router.post(
 
     store.writeCourse(course);
     res.json({ lesson });
+
+    // Kick off audio generation in the background — don't make the client wait.
+    tts.warmAudio(req.params.id, idx, lesson.lecture).catch(() => {});
   })
 );
 
@@ -172,11 +175,13 @@ router.get(
       return res.status(409).json({ error: 'Lesson content has not been generated yet.' });
     }
 
-    const filePath = await tts.getAudio(req.params.id, idx, lesson.lecture);
-
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-    require('fs').createReadStream(filePath).pipe(res);
+    // streamAudio owns the response — it handles its own error replies.
+    // Catch here so wrap() doesn't try to send a second error response.
+    try {
+      await tts.streamAudio(req.params.id, idx, lesson.lecture, res);
+    } catch {
+      // already handled inside streamAudio
+    }
   })
 );
 
