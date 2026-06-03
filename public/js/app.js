@@ -336,7 +336,7 @@ async function viewAssess() {
     try {
       const { course } = await api.createCourse(topic, currentProvider(), answers);
       state.flow = null;
-      go(`/course/${course.id}`);
+      await eagerGenerate(course);
     } catch (e) {
       clear(mount);
       mount.appendChild(el('a', { class: 'back', href: '#/', text: '‹ start over' }));
@@ -345,6 +345,62 @@ async function viewAssess() {
       mount.appendChild(el('button', { class: 'btn btn--ghost', style: 'margin-top:14px', text: 'Back to questions', onClick: viewAssess }));
     }
   }
+}
+
+// ===========================================================================
+// EAGER GENERATION: generate all lessons + audio sequentially after course creation
+// ===========================================================================
+async function eagerGenerate(course) {
+  const total = course.lessons.length;
+
+  clear(mount);
+  mount.appendChild(el('p', { class: 'eyebrow', text: course.topic }));
+  mount.appendChild(el('h1', { text: course.title }));
+
+  const stepText = el('p', { class: 'muted', style: 'margin:4px 0 20px' });
+  const barFill  = el('i', { style: 'width:0%' });
+  const bar      = el('div', { class: 'progress progress--lg' }, barFill);
+  mount.appendChild(stepText);
+  mount.appendChild(bar);
+
+  // A cancelled flag so navigating away mid-generation stops the loop.
+  let cancelled = false;
+  setCleanup(() => { cancelled = true; });
+
+  function setStep(text, doneLessons) {
+    stepText.textContent = text;
+    barFill.style.width = `${Math.round((doneLessons / total) * 100)}%`;
+  }
+
+  setStep(`Preparing lesson 1 of ${total}…`, 0);
+
+  for (let i = 0; i < total; i++) {
+    if (cancelled) return;
+
+    setStep(`Writing lesson ${i + 1} of ${total} — ${course.lessons[i].title}`, i);
+
+    try {
+      const { lesson } = await api.generateLesson(course.id, i, course.provider);
+      course.lessons[i] = lesson;
+    } catch {
+      // Non-fatal: skip this lesson, it will generate on-demand when opened.
+      continue;
+    }
+
+    if (cancelled) return;
+
+    // Warm the audio cache for this lesson in the background.
+    setStep(`Generating audio for lesson ${i + 1} of ${total}…`, i);
+    try {
+      await fetch(api.lessonAudioUrl(course.id, i));
+    } catch {
+      // Audio generation failure is non-fatal.
+    }
+
+    setStep(`Lesson ${i + 1} of ${total} ready`, i + 1);
+  }
+
+  if (!cancelled) go(`/course/${course.id}`);
 }
 
 // ===========================================================================
