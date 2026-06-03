@@ -3,6 +3,7 @@
 const express = require('express');
 const store = require('../store');
 const llm = require('../llm');
+const tts = require('../tts');
 const { assessmentPrompt, outlinePrompt, lessonPrompt } = require('../prompts');
 
 const router = express.Router();
@@ -58,6 +59,7 @@ router.get('/courses/:id', (req, res) => {
 router.delete('/courses/:id', (req, res) => {
   const ok = store.deleteCourse(req.params.id);
   if (!ok) return res.status(404).json({ error: 'Course not found.' });
+  tts.deleteCourseAudio(req.params.id);
   res.json({ ok: true });
 });
 
@@ -125,6 +127,9 @@ router.post(
       return res.json({ lesson });
     }
 
+    // Bust cached audio when regenerating lesson content.
+    if (req.body.regenerate) tts.deleteAudio(req.params.id, idx);
+
     const provider = llm.resolveProvider(req.body.provider || course.provider);
     const { system, user } = lessonPrompt(course, lesson, idx);
     const raw = await llm.chat(provider, system, user);
@@ -149,6 +154,29 @@ router.post(
 
     store.writeCourse(course);
     res.json({ lesson });
+  })
+);
+
+// --- Serve lesson audio (generate + cache on demand) -----------------------
+
+router.get(
+  '/courses/:id/lessons/:index/audio',
+  wrap(async (req, res) => {
+    const course = store.readCourse(req.params.id);
+    if (!course) return res.status(404).json({ error: 'Course not found.' });
+
+    const idx = Number(req.params.index);
+    const lesson = course.lessons?.[idx];
+    if (!lesson) return res.status(404).json({ error: 'Lesson not found.' });
+    if (!lesson.generated || !lesson.lecture) {
+      return res.status(409).json({ error: 'Lesson content has not been generated yet.' });
+    }
+
+    const filePath = await tts.getAudio(req.params.id, idx, lesson.lecture);
+
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    require('fs').createReadStream(filePath).pipe(res);
   })
 );
 

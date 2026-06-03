@@ -3,7 +3,6 @@
 
 import { el, clear } from './ui.js';
 import { api } from './api.js';
-import { LecturePlayer, ttsSupported } from './speech.js';
 import { mountQuiz } from './quiz.js';
 
 const mount = document.getElementById('view');
@@ -250,7 +249,7 @@ function courseCard(c) {
     class: 'course-card__del', title: 'Delete course', html: '&times;',
     onClick: async (e) => {
       e.preventDefault(); e.stopPropagation();
-      if (!confirm(`Delete “${c.title || c.topic}”? This can’t be undone.`)) return;
+      if (!confirm(`Delete “${c.title || c.topic}”? This can't be undone.`)) return;
       try { await api.deleteCourse(c.id); viewHome(); } catch (err) { alert(err.message); }
     },
   });
@@ -296,7 +295,7 @@ async function viewAssess() {
   setCleanup(() => {});
   clear(body);
   body.appendChild(el('p', { class: 'muted', text:
-    'Answer what you can so Figaro can pitch the course at the right level. Leave blanks if you’re unsure — that’s useful information too.' }));
+    'Answer what you can so Figaro can pitch the course at the right level. Leave blanks if you\'re unsure — that\'s useful information too.' }));
 
   const inputs = [];
   questions.forEach((q) => {
@@ -465,35 +464,65 @@ function renderLesson(course, index) {
   }
 
   // --- Audio player ---
+  const audioUrl = api.lessonAudioUrl(course.id, index);
+  const audio = new Audio();
+
   const player = el('div', { class: 'player' });
   const playBtn = el('button', { class: 'player__btn', html: '&#9654;', title: 'Play' });
   const restartBtn = el('button', { class: 'player__btn player__small', html: '&#8635;', title: 'Restart' });
-  const status = el('div', { class: 'player__status', text: ttsSupported ? 'Tap play to hear the lecture' : 'Audio narration isn’t supported in this browser — read the transcript below.' });
+  const status = el('div', { class: 'player__status', text: 'Tap play to hear the lecture' });
   const barFill = el('i');
   const meta = el('div', { class: 'player__meta' }, status, el('div', { class: 'player__bar' }, barFill));
   player.appendChild(el('div', { class: 'player__row' }, playBtn, restartBtn, meta));
   mount.appendChild(player);
 
-  let lect = null;
-  if (ttsSupported) {
-    lect = new LecturePlayer(lesson.lecture, {
-      onProgress: (f) => { barFill.style.width = `${Math.round(f * 100)}%`; },
-      onState: (s) => {
-        playBtn.innerHTML = s === 'playing' ? '&#10073;&#10073;' : '&#9654;';
-        status.textContent =
-          s === 'playing' ? 'Now playing…'
-          : s === 'paused' ? 'Paused'
-          : s === 'done' ? 'Finished — ready for the quiz'
-          : 'Tap play to hear the lecture';
-      },
-    });
-    playBtn.onclick = () => lect.toggle();
-    restartBtn.onclick = () => lect.restart();
-    setCleanup(() => lect.stop());
-  } else {
-    playBtn.disabled = true;
-    restartBtn.disabled = true;
+  function updateBar() {
+    if (audio.duration) barFill.style.width = `${Math.round((audio.currentTime / audio.duration) * 100)}%`;
   }
+
+  audio.addEventListener('timeupdate', updateBar);
+  audio.addEventListener('playing', () => {
+    playBtn.innerHTML = '&#10073;&#10073;';
+    status.textContent = 'Now playing…';
+  });
+  audio.addEventListener('pause', () => {
+    playBtn.innerHTML = '&#9654;';
+    status.textContent = audio.currentTime > 0 ? 'Paused' : 'Tap play to hear the lecture';
+  });
+  audio.addEventListener('ended', () => {
+    playBtn.innerHTML = '&#9654;';
+    status.textContent = 'Finished — ready for the quiz';
+    barFill.style.width = '100%';
+  });
+  audio.addEventListener('waiting', () => { status.textContent = 'Loading audio…'; });
+  audio.addEventListener('error', () => { status.textContent = 'Audio unavailable — read the transcript below.'; });
+
+  playBtn.onclick = () => {
+    if (!audio.src) audio.src = audioUrl;
+    if (audio.paused) audio.play();
+    else audio.pause();
+  };
+  restartBtn.onclick = () => {
+    if (!audio.src) audio.src = audioUrl;
+    audio.currentTime = 0;
+    audio.play();
+  };
+
+  // Media Session API — shows title + controls on lock screen / notification shade.
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: lesson.title,
+      artist: `Figaro · Lesson ${index + 1} of ${course.lessons.length}`,
+      album: course.title,
+    });
+    navigator.mediaSession.setActionHandler('play', () => audio.play());
+    navigator.mediaSession.setActionHandler('pause', () => audio.pause());
+    navigator.mediaSession.setActionHandler('stop', () => { audio.pause(); audio.currentTime = 0; });
+    navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime = Math.max(0, audio.currentTime - 15); });
+    navigator.mediaSession.setActionHandler('seekforward', () => { audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 30); });
+  }
+
+  setCleanup(() => { audio.pause(); audio.src = ''; });
 
   // --- Transcript ---
   const details = el('details', { class: 'transcript' });
@@ -507,7 +536,7 @@ function renderLesson(course, index) {
   mount.appendChild(el('button', {
     class: 'btn btn--primary btn--lg btn--block', style: 'margin-top:22px',
     text: lesson.completed ? 'Retake the quiz' : 'Take the quiz →',
-    onClick: () => { if (lect) lect.stop(); go(`/quiz/${course.id}/${index}`); },
+    onClick: () => { audio.pause(); go(`/quiz/${course.id}/${index}`); },
   }));
 }
 
