@@ -5,8 +5,9 @@ node_modules/
 .env
 .env.local
 
-# Persisted course data (generated at runtime). Keep the folder, ignore contents.
+# Persisted course data (generated at runtime). Keep the folders, ignore contents.
 data/courses/*.json
+data/audio/
 
 # Logs
 *.log
