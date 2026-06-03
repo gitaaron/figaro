@@ -1,0 +1,28 @@
+{
+  "name": "figaro",
+  "version": "1.0.0",
+  "description": "Figaro — an LLM-powered audio tutor that builds personalized mini-courses.",
+  "type": "commonjs",
+  "main": "server/index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "keywords": [
+    "education",
+    "llm",
+    "tutor",
+    "audio",
+    "claude",
+    "openai",
+    "gemini"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}
