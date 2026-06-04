@@ -8,6 +8,8 @@ import { mountQuiz } from './quiz.js';
 const mount = document.getElementById('view');
 const providerSlot = document.getElementById('provider-slot');
 
+
+
 // ---- app state ------------------------------------------------------------
 const state = {
   providers: [],
@@ -33,6 +35,7 @@ function onlyMockAvailable() {
 // Cleanup hook for the active view (stop audio, clear timers).
 let cleanup = () => {};
 function setCleanup(fn) { cleanup = fn; }
+
 
 // ---- provider selector ----------------------------------------------------
 async function initProviders() {
@@ -511,9 +514,13 @@ function renderLesson(course, index) {
   }
 
   // --- Audio player ---
-  const audioUrl = api.lessonAudioUrl(course.id, index);
-  const posKey = `figaro.playpos.${course.id}.${index}`;
+  const audioUrl   = api.lessonAudioUrl(course.id, index);
+  const posKey     = `figaro.playpos.${course.id}.${index}`;
+  const playingKey = `figaro.playing.${course.id}.${index}`;
+  const savedAtKey = `figaro.savedat.${course.id}.${index}`;
   const audio = new Audio();
+  audio.preload = 'metadata';
+  audio.src = audioUrl;
 
   function formatTime(s) {
     if (!isFinite(s) || s < 0) return '0:00';
@@ -521,93 +528,138 @@ function renderLesson(course, index) {
     return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   }
 
-  const player    = el('div', { class: 'player' });
-  const playBtn   = el('button', { class: 'player__btn',               html: '&#9654;',      title: 'Play / pause' });
-  const rewindBtn = el('button', { class: 'player__btn player__small', html: '&#8630;',      title: 'Rewind 30 seconds' });
-  const fromTopBtn= el('button', { class: 'player__btn player__small', html: '&#8635;',      title: 'Start from beginning' });
+  const playerEl  = el('div', { class: 'player' });
+  const playBtn   = el('button', { class: 'player__btn',               html: '&#9654;', title: 'Play / pause' });
+  const rewindBtn = el('button', { class: 'player__btn player__small', html: '&#8630;', title: 'Rewind 30 seconds' });
+  const fromTopBtn= el('button', { class: 'player__btn player__small', html: '&#8635;', title: 'Start from beginning' });
   const status    = el('div',    { class: 'player__status',            text: 'Tap play to hear the lecture' });
   const timeLeft  = el('div',    { class: 'player__timeleft',          text: '' });
-
-  // Scrubber: a range input styled to look like the progress bar.
   const scrubber  = el('input',  { class: 'player__scrubber', type: 'range', min: '0', max: '100', step: '0.1', value: '0' });
 
   const meta = el('div', { class: 'player__meta' },
     el('div', { class: 'player__statusrow' }, status, timeLeft),
     scrubber,
   );
-  player.appendChild(el('div', { class: 'player__row' }, playBtn, rewindBtn, fromTopBtn, meta));
-  mount.appendChild(player);
+  playerEl.appendChild(el('div', { class: 'player__row' }, playBtn, rewindBtn, fromTopBtn, meta));
+  mount.appendChild(playerEl);
 
-  // Track whether the user is actively dragging so we don't fight timeupdate.
   let scrubbing = false;
-  // Set to true only until the very first canplay, for restoring saved position.
-  let pendingResume = true;
 
   function syncScrubber() {
-    if (scrubbing || !audio.duration) return;
+    if (scrubbing || !audio.duration || !isFinite(audio.duration)) return;
     const pct = (audio.currentTime / audio.duration) * 100;
     scrubber.value = pct;
     scrubber.style.setProperty('--pct', `${pct.toFixed(2)}%`);
   }
 
   function syncTimeLeft() {
-    if (!audio.duration) return;
+    if (!audio.duration || !isFinite(audio.duration)) return;
     const rem = audio.duration - audio.currentTime;
     timeLeft.textContent = rem > 0 ? `-${formatTime(rem)}` : '';
+  }
+
+  function syncUI() {
+    syncScrubber();
+    syncTimeLeft();
+    if (audio.ended) {
+      playBtn.innerHTML = '&#9654;';
+      status.textContent = 'Finished \u2014 ready for the quiz';
+      scrubber.value = '100';
+      scrubber.style.setProperty('--pct', '100%');
+      timeLeft.textContent = '';
+    } else if (!audio.paused) {
+      playBtn.innerHTML = '&#10073;&#10073;';
+      status.textContent = 'Now playing\u2026';
+    } else if (audio.currentTime > 0) {
+      playBtn.innerHTML = '&#9654;';
+      status.textContent = `Paused at ${formatTime(audio.currentTime)}`;
+    }
+  }
+
+  function showResumeBanner() {
+    // Remove any existing banner first.
+    const existing = playerEl.querySelector('.player__resume');
+    if (existing) existing.remove();
+    const banner = el('button', {
+      class: 'player__resume',
+      text: '\u25B6\uFE0E Tap to resume',
+      onClick: () => {
+        banner.remove();
+        audio.play();
+      },
+    });
+    playerEl.appendChild(banner);
   }
 
   audio.addEventListener('timeupdate', () => {
     syncScrubber();
     syncTimeLeft();
     if (Math.round(audio.currentTime) % 5 === 0) {
-      sessionStorage.setItem(posKey, audio.currentTime);
+      localStorage.setItem(posKey, audio.currentTime);
+      localStorage.setItem(playingKey, audio.paused ? '0' : '1');
+      localStorage.setItem(savedAtKey, Date.now());
     }
   });
-  audio.addEventListener('durationchange', () => {
-    syncScrubber();
-    syncTimeLeft();
-  });
+  audio.addEventListener('durationchange', () => { syncScrubber(); syncTimeLeft(); });
   audio.addEventListener('playing', () => {
     playBtn.innerHTML = '&#10073;&#10073;';
     status.textContent = 'Now playing\u2026';
+    localStorage.setItem(playingKey, '1');
+    localStorage.setItem(savedAtKey, Date.now());
   });
   audio.addEventListener('pause', () => {
     playBtn.innerHTML = '&#9654;';
-    sessionStorage.setItem(posKey, audio.currentTime);
-    if (!scrubbing) {
-      status.textContent = audio.currentTime > 0 ? 'Paused' : 'Tap play to hear the lecture';
-    }
+    localStorage.setItem(posKey, audio.currentTime);
+    localStorage.setItem(playingKey, '0');
+    localStorage.setItem(savedAtKey, Date.now());
+    if (!scrubbing) status.textContent = audio.currentTime > 0 ? `Paused at ${formatTime(audio.currentTime)}` : 'Tap play to hear the lecture';
   });
   audio.addEventListener('ended', () => {
     playBtn.innerHTML = '&#9654;';
-    sessionStorage.removeItem(posKey);
+    localStorage.removeItem(posKey);
+    localStorage.removeItem(playingKey);
+    localStorage.removeItem(savedAtKey);
     status.textContent = 'Finished \u2014 ready for the quiz';
     scrubber.value = '100';
     scrubber.style.setProperty('--pct', '100%');
     timeLeft.textContent = '';
   });
-  // canplay fires on first load and after every seek — only restore saved
-  // position on the very first fire, then ignore it.
-  audio.addEventListener('canplay', () => {
-    if (!pendingResume) return;
-    pendingResume = false;
-    const saved = parseFloat(sessionStorage.getItem(posKey));
-    if (saved > 0 && saved < audio.duration) {
-      audio.currentTime = saved;
-      status.textContent = `Resuming from ${formatTime(saved)}\u2026`;
-      syncScrubber();
-      syncTimeLeft();
+  audio.addEventListener('loadedmetadata', () => {
+    const saved      = parseFloat(localStorage.getItem(posKey));
+    const wasPlaying = localStorage.getItem(playingKey) === '1';
+    const savedAt    = parseInt(localStorage.getItem(savedAtKey), 10);
+
+    let restorePos = saved;
+    // If audio was playing when we last saved, the OS continued playing it in
+    // the background. Add the elapsed wall-clock time so we skip ahead to where
+    // playback actually is now.
+    if (wasPlaying && savedAt && isFinite(saved)) {
+      const elapsed = (Date.now() - savedAt) / 1000;
+      restorePos = saved + elapsed;
+    }
+
+    // Consume the saved state now so the pause event (fired when autoplay is
+    // blocked) doesn't overwrite restorePos with a stale value before the user
+    // taps the resume banner.
+    localStorage.removeItem(posKey);
+    localStorage.removeItem(playingKey);
+    localStorage.removeItem(savedAtKey);
+
+    if (restorePos > 0 && isFinite(restorePos) && restorePos < audio.duration) {
+      audio.currentTime = restorePos;
+    }
+    syncUI();
+    if (wasPlaying) {
+      audio.play().catch(() => {
+        // Autoplay blocked (no prior user interaction on this page load).
+        // Show a resume banner — tapping it counts as a user gesture.
+        showResumeBanner();
+      });
     }
   });
-  // Only show 'loading' when not mid-scrub, to avoid the flashing loop.
-  audio.addEventListener('waiting', () => {
-    if (!scrubbing) status.textContent = 'Loading audio\u2026';
-  });
-  audio.addEventListener('error', () => {
-    status.textContent = 'Audio unavailable \u2014 read the transcript below.';
-  });
+  audio.addEventListener('waiting', () => { if (!scrubbing) status.textContent = 'Loading audio\u2026'; });
+  audio.addEventListener('error',   () => { status.textContent = 'Audio unavailable \u2014 read the transcript below.'; });
 
-  // Scrubber interaction.
   scrubber.addEventListener('mousedown',  () => { scrubbing = true; });
   scrubber.addEventListener('touchstart', () => { scrubbing = true; }, { passive: true });
   scrubber.addEventListener('input', () => {
@@ -618,39 +670,30 @@ function renderLesson(course, index) {
     }
   });
   scrubber.addEventListener('change', () => {
-    // Remember whether audio was playing before we release the scrubber.
     const wasPlaying = !audio.paused;
     scrubbing = false;
-    if (audio.duration) {
-      ensureSrc();
+    if (audio.duration && isFinite(audio.duration)) {
       audio.currentTime = (scrubber.value / 100) * audio.duration;
       scrubber.style.setProperty('--pct', `${parseFloat(scrubber.value).toFixed(2)}%`);
-      // Only auto-play if it was already playing; don't start playback from a paused state.
       if (wasPlaying) audio.play();
     }
   });
 
-  function ensureSrc() { if (!audio.src) audio.src = audioUrl; }
-
-  playBtn.onclick = () => {
-    ensureSrc();
-    if (audio.paused) audio.play(); else audio.pause();
-  };
+  playBtn.onclick = () => { if (audio.paused) audio.play(); else audio.pause(); };
   rewindBtn.onclick = () => {
-    ensureSrc();
     audio.currentTime = Math.max(0, audio.currentTime - 30);
     if (audio.paused && audio.currentTime > 0) audio.play();
   };
   fromTopBtn.onclick = () => {
-    ensureSrc();
-    sessionStorage.removeItem(posKey);
+    localStorage.removeItem(posKey);
+    localStorage.removeItem(playingKey);
+    localStorage.removeItem(savedAtKey);
     audio.currentTime = 0;
     scrubber.value = '0';
     scrubber.style.setProperty('--pct', '0%');
     audio.play();
   };
 
-  // Media Session API — shows title + controls on lock screen / notification shade.
   if ('mediaSession' in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({
       title: lesson.title,
@@ -665,7 +708,11 @@ function renderLesson(course, index) {
   }
 
   setCleanup(() => {
-    sessionStorage.setItem(posKey, audio.currentTime);
+    if (audio.currentTime > 0) {
+      localStorage.setItem(posKey, audio.currentTime);
+      localStorage.setItem(playingKey, audio.paused ? '0' : '1');
+      localStorage.setItem(savedAtKey, Date.now());
+    }
     audio.pause();
     audio.src = '';
   });
@@ -737,10 +784,25 @@ function route() {
   }
 }
 
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', () => {
+  // Persist the current route so we can restore it after a full app exit.
+  localStorage.setItem('figaro.lastRoute', location.hash);
+  route();
+});
 
 // ---- boot ----
 (async function boot() {
   await initProviders();
+
+  // If the page loaded without a hash (e.g. opened from homescreen icon),
+  // restore the last lesson the user was viewing.
+  if (!location.hash || location.hash === '#' || location.hash === '#/') {
+    const last = localStorage.getItem('figaro.lastRoute');
+    if (last && last.startsWith('#/lesson/')) {
+      location.hash = last;
+      return; // hashchange will fire route()
+    }
+  }
+
   route();
 })();
