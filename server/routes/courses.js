@@ -4,7 +4,7 @@ const express = require('express');
 const store = require('../store');
 const llm = require('../llm');
 const tts = require('../tts');
-const { assessmentPrompt, outlinePrompt, lessonPrompt } = require('../prompts');
+const { assessmentPrompt, outlinePrompt, lessonPrompt, chatPrompt, suggestionsPrompt } = require('../prompts');
 
 const router = express.Router();
 
@@ -110,6 +110,62 @@ router.post(
   })
 );
 
+// --- Follow-up chat on a lesson --------------------------------------------
+
+router.post(
+  '/courses/:id/lessons/:index/chat',
+  wrap(async (req, res) => {
+    const course = store.readCourse(req.params.id);
+    if (!course) return res.status(404).json({ error: 'Course not found.' });
+
+    const idx = Number(req.params.index);
+    const lesson = course.lessons?.[idx];
+    if (!lesson) return res.status(404).json({ error: 'Lesson not found.' });
+    if (!lesson.generated) return res.status(409).json({ error: 'Lesson content not generated yet.' });
+
+    const question = String(req.body.question || '').trim();
+    if (!question) return res.status(400).json({ error: 'A question is required.' });
+
+    const history = Array.isArray(req.body.history) ? req.body.history : [];
+    const provider = llm.resolveProvider(req.body.provider || course.provider);
+
+    const { system, user } = chatPrompt(course, { ...lesson, index: idx }, history, question);
+    const answer = await llm.chat(provider, system, user);
+
+    // Persist follow-up Q&A on the lesson so suggestions can use it.
+    if (!Array.isArray(lesson.followUps)) lesson.followUps = [];
+    lesson.followUps.push({ question, answer: answer.trim(), askedAt: Date.now() });
+    store.writeCourse(course);
+
+    res.json({ answer: answer.trim() });
+  })
+);
+
+// --- Suggested follow-on course topics (POST — can be regenerated) ---------
+
+router.post(
+  '/courses/:id/suggestions',
+  wrap(async (req, res) => {
+    const course = store.readCourse(req.params.id);
+    if (!course) return res.status(404).json({ error: 'Course not found.' });
+
+    const provider = llm.resolveProvider(req.body.provider || course.provider);
+    const { system, user } = suggestionsPrompt(course);
+    const raw = await llm.chat(provider, system, user);
+    const parsed = llm.parseJson(raw);
+
+    const suggestions = Array.isArray(parsed.suggestions)
+      ? parsed.suggestions.map((s) => String(s).trim()).filter(Boolean).slice(0, 4)
+      : [];
+
+    // Persist so the course page can show them without re-generating.
+    course.suggestions = suggestions;
+    store.writeCourse(course);
+
+    res.json({ suggestions });
+  })
+);
+
 // --- Generate one lesson's content (lazy, cached on disk) ------------------
 
 router.post(
@@ -133,7 +189,9 @@ router.post(
     const provider = llm.resolveProvider(req.body.provider || course.provider);
     const { system, user } = lessonPrompt(course, lesson, idx);
     const raw = await llm.chat(provider, system, user);
+    console.log('[generate] raw response length:', raw.length, '— last 200 chars:', raw.slice(-200));
     const parsed = llm.parseJson(raw);
+    console.log('[generate] parsed keys:', Object.keys(parsed), '— formulas:', JSON.stringify(parsed.formulas?.slice(0,1)));
 
     const quiz = (Array.isArray(parsed.quiz) ? parsed.quiz : [])
       .map((q) => ({
@@ -146,6 +204,36 @@ router.post(
 
     lesson.lecture = String(parsed.lecture || '').trim();
     lesson.quiz = quiz;
+
+    // Formulas (optional — array of { latex, label, variables }).
+    const rawFormulas = Array.isArray(parsed.formulas) ? parsed.formulas : [];
+    lesson.formulas = rawFormulas
+      .filter((f) => f && typeof f.latex === 'string' && f.latex.trim())
+      .map((f) => ({
+        latex: String(f.latex).trim(),
+        label: String(f.label || '').trim(),
+        variables: Array.isArray(f.variables)
+          ? f.variables
+              .filter((v) => v && v.symbol)
+              .map((v) => ({ symbol: String(v.symbol).trim(), meaning: String(v.meaning || '').trim() }))
+          : [],
+      }));
+
+    // Concept visual (optional — only when no formulas, for pipeline/hierarchy/comparison).
+    if (!lesson.formulas.length && parsed.concept && parsed.concept.steps) {
+      lesson.concept = {
+        title: String(parsed.concept.title || '').trim(),
+        style: String(parsed.concept.style || 'flow').trim(),
+        steps: Array.isArray(parsed.concept.steps)
+          ? parsed.concept.steps
+              .filter((s) => s && s.label)
+              .map((s) => ({ label: String(s.label).trim(), detail: String(s.detail || '').trim() }))
+          : [],
+      };
+    } else {
+      lesson.concept = null;
+    }
+
     lesson.generated = Boolean(lesson.lecture && quiz.length);
 
     if (!lesson.generated) {

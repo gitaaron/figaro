@@ -60,7 +60,8 @@ body::before {
 .phone {
   position: relative;
   z-index: 1;
-  max-width: 480px;
+  width: 100%;
+  max-width: 720px;
   min-height: 100dvh;
   margin: 0 auto;
   background: var(--paper);
@@ -70,7 +71,7 @@ body::before {
   flex-direction: column;
   box-shadow: var(--shadow-lg);
 }
-@media (min-width: 520px) {
+@media (min-width: 760px) {
   body { padding: 24px 0; }
   .phone { min-height: calc(100dvh - 48px); border-radius: 28px; overflow: hidden; }
 }
@@ -284,6 +285,163 @@ p { margin: 0 0 1em; }
 .lesson-head { margin-bottom: 18px; }
 .lesson-num { font-style: italic; color: var(--accent); font-size: 15px; }
 
+/* ---- lesson regenerate button (inline in the card's badge row) ---- */
+.lesson-regen {
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--ink-faint);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: color .12s ease, background .12s ease;
+}
+.lesson-regen:hover { color: var(--accent-ink); background: var(--accent-soft); }
+.lesson-regen:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---- collapsible lessons list ---- */
+.lessons-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 30px 0 14px;
+}
+.lessons-summary::-webkit-details-marker { display: none; }
+.lessons-summary::after { content: "▾"; color: var(--ink-faint); font-size: 16px; }
+details[open] > .lessons-summary::after { content: "▴"; }
+.lessons-summary h2 { font-size: 21px; }
+
+/* ---- collapsible infographic (formula / concept) ---- */
+.infographic-details { margin: 0 0 18px; }
+.infographic-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-3);
+  box-shadow: var(--shadow);
+}
+.infographic-details[open] > .infographic-summary {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom: none;
+}
+.infographic-summary::-webkit-details-marker { display: none; }
+.infographic-summary::after { content: "▾"; color: var(--ink-faint); font-size: 14px; }
+.infographic-details[open] > .infographic-summary::after { content: "▴"; }
+.infographic-summary--formula { color: var(--accent-ink); }
+.infographic-summary--concept { color: var(--gold); }
+.infographic-details[open] > .infographic {
+  margin-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-top: none;
+}
+
+/* ---- infographic panel (shared wrapper) ---- */
+.infographic {
+  margin: 0 0 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-3);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  padding: 14px 16px 16px;
+}
+.infographic__caption {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  color: var(--ink-soft);
+}
+.infographic__caption--formula { color: var(--accent-ink); }
+.infographic__caption--concept { color: var(--gold); }
+
+/* ---- formula cards ---- */
+.formula-card {
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+.formula-card:last-child { margin-bottom: 0; }
+.formula-card__label {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--accent-ink);
+  margin-bottom: 10px;
+}
+.formula-card__display {
+  overflow-x: auto;
+  text-align: center;
+  padding: 6px 0 10px;
+}
+/* KaTeX overrides to fit the warm palette */
+.formula-card__display .katex { font-size: 1.35em; color: var(--ink); }
+.formula-card__vars {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 14px;
+  margin: 8px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+.formula-card__sym {
+  font-weight: 600;
+  color: var(--accent-ink);
+  white-space: nowrap;
+}
+.formula-card__sym .katex { font-size: 1em; }
+.formula-card__meaning { color: var(--ink-soft); margin: 0; }
+
+/* ---- concept flow ---- */
+.concept-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.concept-flow--hierarchy { flex-direction: column; align-items: flex-start; }
+.concept-node {
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  padding: 8px 12px;
+  min-width: 80px;
+  text-align: center;
+}
+.concept-node__label {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+}
+.concept-node__detail { font-size: 12px; color: var(--ink-soft); margin-top: 3px; }
+.concept-arrow {
+  color: var(--accent);
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
 .player {
   position: relative;
   background: var(--ink);
@@ -478,6 +636,73 @@ p { margin: 0 0 1em; }
 .review-item .ra { font-size: 15px; }
 .review-item .ra.ok { color: var(--success); }
 .review-item .ra.no { color: var(--danger); }
+
+/* ---- lesson follow-up chat ---- */
+.chat-section { margin-top: 32px; margin-bottom: 14px; }
+.chat-section__heading {
+  font-size: 17px;
+  color: var(--ink-soft);
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.chat-bubble {
+  max-width: 88%;
+  padding: 11px 14px;
+  border-radius: var(--radius-s);
+  font-size: 16px;
+  line-height: 1.5;
+}
+.chat-bubble--user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: #fff7ec;
+  border-bottom-right-radius: 4px;
+}
+.chat-bubble--figaro {
+  align-self: flex-start;
+  background: var(--paper-3);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  border-bottom-left-radius: 4px;
+}
+.chat-bubble--loading { color: var(--ink-faint); font-style: italic; }
+.chat-bubble--error { background: #f6e3df; border-color: #e3b6ac; color: var(--danger); }
+.chat-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.chat-input { resize: none; }
+
+/* ---- suggested next topics ---- */
+.suggest-list { display: flex; flex-direction: column; gap: 10px; list-style: none; padding: 0; margin: 0; }
+.suggest-item {
+  width: 100%;
+  text-align: left;
+  font-family: var(--font-body);
+  font-size: 17px;
+  color: var(--ink);
+  background: var(--paper-2);
+  border: 1.5px solid var(--line-2);
+  border-radius: var(--radius);
+  padding: 14px 17px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: var(--shadow);
+  transition: transform .1s ease, box-shadow .15s ease, border-color .12s ease;
+}
+.suggest-item::after { content: "→"; color: var(--accent); flex-shrink: 0; margin-left: 10px; }
+.suggest-item:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); border-color: var(--accent); }
+.suggest-item:active { transform: translateY(0); }
+.suggest-item:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 
 /* ---- misc ---- */
 .row { display: flex; gap: 12px; }

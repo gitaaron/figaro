@@ -55,6 +55,10 @@ shaky areas, and build toward genuine competence in "${topic}".
 Each lesson will later become a ~5-minute audio lecture, so scope each one to
 a single digestible idea.
 
+IMPORTANT — mathematical formulas: if a lesson would naturally introduce
+many formulas, scope it down so each lesson covers at most 3 formulas.
+This keeps each lesson self-contained and digestible.
+
 Return ONLY this JSON shape:
 {
   "title": "A short, compelling course title",
@@ -92,9 +96,47 @@ Then write a 5-question multiple-choice quiz on THIS lesson. Each question has
 exactly 4 options, one correct. "answer" is the 0-based index of the correct
 option. Include a one-sentence explanation.
 
+VISUAL SUPPLEMENT RULES:
+
+A. FORMULAS — if this lesson introduces any mathematical formulas, you MUST
+   include a "formulas" array. Each entry represents one formula:
+   {
+     "latex": "...",   // the formula in LaTeX notation, e.g. "\\frac{QK^T}{\\sqrt{d_k}}"
+     "label": "...",   // short display name, e.g. "Scaled Dot-Product"
+     "variables": [    // each variable that appears in the formula
+       { "symbol": "Q", "meaning": "query matrix" }
+     ]
+   }
+   Omit "formulas" (or use an empty array) if the lesson has no formulas.
+
+B. CONCEPT VISUAL — if no formulas are present but the lesson covers a concept
+   that would be significantly clearer as a labelled diagram (e.g. a pipeline,
+   a hierarchy, a before/after comparison), include a "concept" object:
+   {
+     "title": "Short display title",
+     "steps": [          // ordered list of nodes/steps/components
+       { "label": "...", "detail": "one short phrase" }
+     ],
+     "style": "flow" | "hierarchy" | "comparison"
+   }
+   Omit "concept" entirely if the lesson is purely narrative or already has
+   formulas.
+
 Return ONLY this JSON shape:
 {
   "lecture": "The full spoken lecture as one prose string.",
+  "formulas": [
+    {
+      "latex": "...",
+      "label": "...",
+      "variables": [ { "symbol": "...", "meaning": "..." } ]
+    }
+  ],
+  "concept": {
+    "title": "...",
+    "steps": [ { "label": "...", "detail": "..." } ],
+    "style": "flow"
+  },
   "quiz": [
     {
       "question": "...",
@@ -103,8 +145,64 @@ Return ONLY this JSON shape:
       "explanation": "..."
     }
   ]
+}
+
+Omit "formulas" if there are none. Omit "concept" if not needed or if formulas are present.`;
+  return { system, user };
+}
+
+function chatPrompt(course, lesson, history, question) {
+  const system =
+    'You are Figaro, an expert tutor. ' +
+    'Answer the learner\'s follow-up question clearly and concisely, ' +
+    'staying grounded in the lesson content. ' +
+    'Respond in plain prose — no markdown, no bullet points, no headings. ' +
+    'Keep answers to 2-4 short paragraphs at most.';
+
+  const historyText = (history || [])
+    .map((h) => `Learner: ${h.question}\nFigaro: ${h.answer}`)
+    .join('\n\n');
+
+  const user = `Course: "${course.title}" (${course.topic}, ${course.level} level).
+Lesson ${lesson.index + 1}: "${lesson.title}"
+
+Lesson content:
+${lesson.lecture}
+
+${historyText ? `Prior follow-up conversation:\n${historyText}\n\n` : ''}Learner's question: ${question}`;
+
+  return { system, user };
+}
+
+function suggestionsPrompt(course) {
+  const system = BASE_SYSTEM;
+  const lessonTitles = (course.lessons || []).map((l, i) => `${i + 1}. ${l.title}`).join('\n');
+
+  // Collect all follow-up questions asked across every lesson.
+  const allFollowUps = (course.lessons || []).flatMap((l) =>
+    (l.followUps || []).map((f) => `[${l.title}] Q: ${f.question}`)
+  );
+  const followUpSection = allFollowUps.length
+    ? `\nThe learner also asked these follow-up questions during the course:\n${allFollowUps.join('\n')}\n`
+    : '';
+
+  const user = `A learner is studying a course called "${course.title}" on the topic "${course.topic}" at ${course.level} level.
+
+Lessons:
+${lessonTitles}
+${followUpSection}
+Based on what they have studied and the questions they have asked, suggest 4 follow-on course topics they would naturally want to explore next. Each topic should be a concise phrase (5-10 words) — specific, actionable, and clearly connected to or extending this course. Vary the suggestions: some can go deeper into sub-topics, some can branch into adjacent areas.
+
+Return ONLY this JSON shape:
+{
+  "suggestions": [
+    "topic phrase one",
+    "topic phrase two",
+    "topic phrase three",
+    "topic phrase four"
+  ]
 }`;
   return { system, user };
 }
 
-module.exports = { assessmentPrompt, outlinePrompt, lessonPrompt, BASE_SYSTEM };
+module.exports = { assessmentPrompt, outlinePrompt, lessonPrompt, chatPrompt, suggestionsPrompt, BASE_SYSTEM };

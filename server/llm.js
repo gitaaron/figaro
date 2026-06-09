@@ -76,7 +76,7 @@ async function callClaude(system, user) {
     },
     body: JSON.stringify({
       model: PROVIDERS.claude.model(),
-      max_tokens: 4096,
+      max_tokens: 8000,
       system,
       messages: [{ role: 'user', content: user }],
     }),
@@ -164,6 +164,22 @@ function mockChat(system, user) {
         title: t,
         summary: `A short look at ${t.toLowerCase()}.`,
       })),
+    });
+  }
+
+  if (/Learner's question:/i.test(user)) {
+    const q = (user.match(/Learner's question:\s*(.+)/) || [])[1] || 'that question';
+    return `Great question about ${q.slice(0, 60)}. In the demo mode Figaro can't generate a real answer — connect a provider in your .env to get genuine follow-up explanations tailored to the lesson content. For now, try re-reading the relevant part of the transcript above, or take the quiz to test your understanding.`;
+  }
+
+  if (/Suggest 4 follow-on course topics/i.test(user)) {
+    return JSON.stringify({
+      suggestions: [
+        `Going deeper into advanced ${topic} techniques`,
+        `Real-world applications of ${topic}`,
+        `The mathematics and theory behind ${topic}`,
+        `${topic} in production: tools and best practices`,
+      ],
     });
   }
 

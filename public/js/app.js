@@ -430,9 +430,18 @@ async function viewCourse(id) {
     el('i', { style: `width:${Math.round((passed / course.lessons.length) * 100)}%` })));
   mount.appendChild(el('p', { class: 'muted', style: 'font-size:14px', text: `${passed} of ${course.lessons.length} lessons mastered` }));
 
-  mount.appendChild(el('div', { class: 'section-head' }, el('h2', { text: 'Lessons' })));
+  const suggestSlot = el('div');
+
+  const lessonsDetails = el('details', { open: true });
+  const lessonsSummary = el('summary', { class: 'lessons-summary' });
+  lessonsSummary.appendChild(el('h2', { text: 'Lessons' }));
+  lessonsDetails.appendChild(lessonsSummary);
+  mount.appendChild(lessonsDetails);
+
   const list = el('ul', { class: 'course-list' });
   course.lessons.forEach((lesson, i) => {
+    const li = el('li');
+
     const card = el('a', { class: 'course-card', href: `#/lesson/${course.id}/${i}` });
     card.appendChild(el('div', { class: 'lesson-num', text: `Lesson ${i + 1}` }));
     card.appendChild(el('h3', { text: lesson.title }));
@@ -446,10 +455,108 @@ async function viewCourse(id) {
     } else {
       status.appendChild(el('span', { class: 'badge', text: lesson.generated ? 'Continue' : 'Start' }));
     }
+
+    // Regenerate button — sits inside the card footer alongside the status badge.
+    const regenBtn = el('button', {
+      class: 'lesson-regen',
+      text: '↺ Regenerate',
+      title: 'Rewrite this lesson from scratch',
+      onClick: async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!confirm(`Regenerate "${lesson.title}"? The current content and audio will be replaced.`)) return;
+        regenBtn.disabled = true;
+        regenBtn.textContent = 'Regenerating…';
+        try {
+          await api.generateLesson(course.id, i, currentProvider(), true);
+          viewCourse(id);
+        } catch (err) {
+          regenBtn.disabled = false;
+          regenBtn.textContent = '↺ Regenerate';
+          alert(`Could not regenerate: ${err.message}`);
+        }
+      },
+    });
+    status.appendChild(regenBtn);
     card.appendChild(status);
-    list.appendChild(el('li', {}, card));
+    li.appendChild(card);
+
+    list.appendChild(li);
   });
-  mount.appendChild(list);
+  lessonsDetails.appendChild(list);
+
+  mount.appendChild(suggestSlot);
+  renderSuggestions(suggestSlot, course, id);
+}
+
+function renderSuggestions(slot, course, id) {
+  clear(slot);
+
+  function startCourse(topic) {
+    clear(mount);
+    mount.appendChild(el('p', { class: 'eyebrow', text: topic }));
+    mount.appendChild(el('h1', { text: 'Building your course…' }));
+    mount.appendChild(loading('Figaro is designing your course…', [
+      'Outlining the lessons…',
+      'Shaping a learning path…',
+    ]));
+    api.createCourse(topic, currentProvider(), [])
+      .then(({ course: newCourse }) => eagerGenerate(newCourse))
+      .catch((e) => {
+        clear(mount);
+        mount.appendChild(el('a', { class: 'back', href: `#/course/${id}`, text: '‹ back' }));
+        mount.appendChild(errorBox(e.message));
+      });
+  }
+
+  function renderList(suggestions) {
+    slot.appendChild(el('div', { class: 'section-head', style: 'margin-top:32px' },
+      el('h2', { text: 'Suggested next topics' })));
+    const list = el('ul', { class: 'suggest-list' });
+    for (const topic of suggestions) {
+      const li = el('li');
+      li.appendChild(el('button', {
+        class: 'suggest-item',
+        text: topic,
+        onClick: () => startCourse(topic),
+      }));
+      list.appendChild(li);
+    }
+    slot.appendChild(list);
+
+    const regenBtn = el('button', {
+      class: 'btn btn--ghost', style: 'margin-top:14px; font-size:14px',
+      text: '↺ Regenerate suggestions',
+      onClick: () => generate(regenBtn),
+    });
+    slot.appendChild(regenBtn);
+  }
+
+  function generate(triggerBtn) {
+    if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = 'Generating…'; }
+    api.generateSuggestions(id, currentProvider())
+      .then(({ suggestions }) => {
+        course.suggestions = suggestions;
+        clear(slot);
+        if (suggestions.length) renderList(suggestions);
+      })
+      .catch(() => {
+        if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.textContent = '↺ Regenerate suggestions'; }
+      });
+  }
+
+  if (course.suggestions && course.suggestions.length) {
+    renderList(course.suggestions);
+  } else {
+    // No suggestions yet — show the generate button.
+    slot.appendChild(el('div', { style: 'margin-top:32px' },
+      el('button', {
+        class: 'btn btn--ghost btn--block',
+        text: 'Recommend follow-up course topics',
+        onClick: (e) => generate(e.currentTarget),
+      })
+    ));
+  }
 }
 
 // ===========================================================================
@@ -511,6 +618,61 @@ function renderLesson(course, index) {
       ? el('span', { class: 'badge badge--ok', html: `&#10003; Mastered · ${lesson.score}%` })
       : el('span', { class: 'badge badge--muted', text: `Last score ${lesson.score}% — aim for 80%` });
     mount.appendChild(el('div', { style: 'margin-bottom:16px' }, b));
+  }
+
+  // --- Formulas / concept visual ---
+  function renderKatex(node, latex, displayMode) {
+    try {
+      window.katex.render(latex, node, { displayMode: !!displayMode, throwOnError: false });
+    } catch {
+      node.textContent = latex;
+    }
+  }
+
+  if (lesson.formulas && lesson.formulas.length) {
+    const details = el('details', { class: 'infographic-details' });
+    const captionText = lesson.formulas.length === 1 ? 'Formula' : 'Formulas';
+    details.appendChild(el('summary', { class: 'infographic-summary infographic-summary--formula', text: captionText }));
+    const panel = el('div', { class: 'infographic' });
+    for (const f of lesson.formulas) {
+      const card = el('div', { class: 'formula-card' });
+      if (f.label) card.appendChild(el('div', { class: 'formula-card__label', text: f.label }));
+      const display = el('div', { class: 'formula-card__display' });
+      renderKatex(display, f.latex, true);
+      card.appendChild(display);
+      if (f.variables && f.variables.length) {
+        const vars = el('dl', { class: 'formula-card__vars' });
+        for (const v of f.variables) {
+          const dt = el('dt', { class: 'formula-card__sym' });
+          renderKatex(dt, v.symbol, false);
+          vars.appendChild(dt);
+          vars.appendChild(el('dd', { class: 'formula-card__meaning', text: v.meaning }));
+        }
+        card.appendChild(vars);
+      }
+      panel.appendChild(card);
+    }
+    details.appendChild(panel);
+    mount.appendChild(details);
+  } else if (lesson.concept && lesson.concept.steps && lesson.concept.steps.length) {
+    const details = el('details', { class: 'infographic-details' });
+    const captionText = lesson.concept.title || 'Concept';
+    details.appendChild(el('summary', { class: 'infographic-summary infographic-summary--concept', text: captionText }));
+    const panel = el('div', { class: 'infographic' });
+    const flow = el('div', { class: `concept-flow concept-flow--${lesson.concept.style || 'flow'}` });
+    lesson.concept.steps.forEach((s, si) => {
+      const node = el('div', { class: 'concept-node' },
+        el('div', { class: 'concept-node__label', text: s.label }),
+        s.detail ? el('div', { class: 'concept-node__detail', text: s.detail }) : null,
+      );
+      flow.appendChild(node);
+      if (si < lesson.concept.steps.length - 1) {
+        flow.appendChild(el('div', { class: 'concept-arrow', html: '&#8594;' }));
+      }
+    });
+    panel.appendChild(flow);
+    details.appendChild(panel);
+    mount.appendChild(details);
   }
 
   // --- Audio player ---
@@ -731,6 +893,65 @@ function renderLesson(course, index) {
     text: lesson.completed ? 'Retake the quiz' : 'Take the quiz →',
     onClick: () => { audio.pause(); go(`/quiz/${course.id}/${index}`); },
   }));
+
+  // --- Follow-up chat ---
+  mount.appendChild(el('div', { class: 'chat-section' },
+    el('h2', { class: 'chat-section__heading', text: 'Ask a follow-up question' }),
+  ));
+
+  // Seed history from persisted follow-ups so reloading restores prior Q&A.
+  const chatHistory = (lesson.followUps || []).map((f) => ({ question: f.question, answer: f.answer }));
+  const chatLog  = el('div', { class: 'chat-log' });
+  for (const { question, answer } of chatHistory) {
+    chatLog.appendChild(el('div', { class: 'chat-bubble chat-bubble--user', text: question }));
+    chatLog.appendChild(el('div', { class: 'chat-bubble chat-bubble--figaro', text: answer }));
+  }
+  const chatInput = el('textarea', {
+    class: 'textarea chat-input',
+    rows: 2,
+    placeholder: 'Ask anything about this lesson…',
+  });
+  const chatSend = el('button', {
+    class: 'btn btn--primary btn--block',
+    text: 'Ask →',
+  });
+
+  async function sendChat() {
+    const q = chatInput.value.trim();
+    if (!q) { chatInput.focus(); return; }
+    chatInput.value = '';
+    chatSend.disabled = true;
+
+    // Optimistically append the question.
+    const qBubble = el('div', { class: 'chat-bubble chat-bubble--user', text: q });
+    chatLog.appendChild(qBubble);
+    const aBubble = el('div', { class: 'chat-bubble chat-bubble--figaro chat-bubble--loading', text: 'Thinking…' });
+    chatLog.appendChild(aBubble);
+    aBubble.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    try {
+      const { answer } = await api.chatLesson(course.id, index, q, chatHistory, currentProvider());
+      aBubble.classList.remove('chat-bubble--loading');
+      aBubble.textContent = answer;
+      chatHistory.push({ question: q, answer });
+    } catch (e) {
+      aBubble.classList.remove('chat-bubble--loading');
+      aBubble.classList.add('chat-bubble--error');
+      aBubble.textContent = `Error: ${e.message}`;
+    } finally {
+      chatSend.disabled = false;
+      chatInput.focus();
+      aBubble.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }
+
+  chatSend.addEventListener('click', sendChat);
+  chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sendChat();
+  });
+
+  mount.appendChild(chatLog);
+  mount.appendChild(el('div', { class: 'chat-compose' }, chatInput, chatSend));
 }
 
 // ===========================================================================

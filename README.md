@@ -123,20 +123,6 @@ figaro/
 
 ---
 
-## Turn this into a git repository
-
-From inside the unzipped folder:
-
-```bash
-git init
-git add .
-git commit -m "Initial commit: Figaro LLM tutor"
-```
-
-The included `.gitignore` keeps `node_modules/`, your `.env` secrets, and generated course files out of version control.
-
----
-
 ## Notes & limitations
 
 - **Voice recognition** uses the Web Speech API, which is best supported in Chromium-based browsers and requires microphone permission. If it's unavailable, the hands-free option is disabled and you can still tap your answers.

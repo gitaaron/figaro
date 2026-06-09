@@ -38,6 +38,12 @@ export const api = {
   completeLesson: (courseId, index, score) =>
     req('POST', `/api/courses/${courseId}/lessons/${index}/complete`, { score }),
 
+  chatLesson: (courseId, index, question, history, provider) =>
+    req('POST', `/api/courses/${courseId}/lessons/${index}/chat`, { question, history, provider }),
+
+  generateSuggestions: (courseId, provider) =>
+    req('POST', `/api/courses/${courseId}/suggestions`, { provider }),
+
   // Returns the URL to stream/download the lesson audio MP3.
   // The server generates + caches it on first request.
   lessonAudioUrl: (courseId, index) => `/api/courses/${courseId}/lessons/${index}/audio`,

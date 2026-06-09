@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const c = require\\('/Users/asurty/PProject/figaro/data/courses/6ab47d1bfc77f7f1.json'\\); const l = c.lessons[3]; console.log\\('title:', l.title\\); console.log\\('generated:', l.generated\\); console.log\\('formulas:', JSON.stringify\\(l.formulas, null, 2\\)\\); console.log\\('concept:', JSON.stringify\\(l.concept, null, 2\\)\\); console.log\\('has infographic:', !!l.infographic\\);\")",
+      "Bash(node -e \"const fs=require\\('fs'\\); const c=JSON.parse\\(fs.readFileSync\\('/Users/asurty/PProject/figaro/data/courses/6ab47d1bfc77f7f1.json'\\)\\); const l=c.lessons[3]; console.log\\('title:', l.title\\); console.log\\('generated:', l.generated\\); console.log\\('formulas:', JSON.stringify\\(l.formulas,null,2\\)\\); console.log\\('concept:', JSON.stringify\\(l.concept,null,2\\)\\);\")",
+      "Bash(node -e \"const fs=require\\('fs'\\); const c=JSON.parse\\(fs.readFileSync\\('/Users/asurty/PProject/figaro/data/courses/5bcb730f64470bc0.json'\\)\\); const l=c.lessons[3]; console.log\\('title:', l.title\\); console.log\\('generated:', l.generated\\); console.log\\('formulas:', JSON.stringify\\(l.formulas,null,2\\)\\); console.log\\('concept:', JSON.stringify\\(l.concept,null,2\\)\\);\")",
+      "Bash(chmod +x /Users/asurty/PProject/figaro/scripts/courses.js && node /Users/asurty/PProject/figaro/scripts/courses.js list)"
+    ]
+  }
+}
