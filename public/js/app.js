@@ -4,6 +4,7 @@
 import { el, clear } from './ui.js';
 import { api } from './api.js';
 import { mountQuiz } from './quiz.js';
+import { say, ttsSupported } from './speech.js';
 
 const mount = document.getElementById('view');
 const providerSlot = document.getElementById('provider-slot');
@@ -902,9 +903,25 @@ function renderLesson(course, index) {
   // Seed history from persisted follow-ups so reloading restores prior Q&A.
   const chatHistory = (lesson.followUps || []).map((f) => ({ question: f.question, answer: f.answer }));
   const chatLog  = el('div', { class: 'chat-log' });
+
+  function figaroBubble(text) {
+    const bubble = el('div', { class: 'chat-bubble chat-bubble--figaro' });
+    bubble.appendChild(el('span', { class: 'chat-bubble__text', text }));
+    if (ttsSupported) {
+      const speakBtn = el('button', {
+        class: 'chat-bubble__speak',
+        title: 'Play response',
+        html: '&#9654;',
+        onClick: () => say(text),
+      });
+      bubble.appendChild(speakBtn);
+    }
+    return bubble;
+  }
+
   for (const { question, answer } of chatHistory) {
     chatLog.appendChild(el('div', { class: 'chat-bubble chat-bubble--user', text: question }));
-    chatLog.appendChild(el('div', { class: 'chat-bubble chat-bubble--figaro', text: answer }));
+    chatLog.appendChild(figaroBubble(answer));
   }
   const chatInput = el('textarea', {
     class: 'textarea chat-input',
@@ -931,8 +948,8 @@ function renderLesson(course, index) {
 
     try {
       const { answer } = await api.chatLesson(course.id, index, q, chatHistory, currentProvider());
-      aBubble.classList.remove('chat-bubble--loading');
-      aBubble.textContent = answer;
+      const filled = figaroBubble(answer);
+      aBubble.replaceWith(filled);
       chatHistory.push({ question: q, answer });
     } catch (e) {
       aBubble.classList.remove('chat-bubble--loading');

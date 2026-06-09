@@ -670,7 +670,26 @@ details[open] > .lessons-summary::after { content: "▴"; }
   border: 1px solid var(--line);
   color: var(--ink);
   border-bottom-left-radius: 4px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
 }
+.chat-bubble__text { flex: 1; }
+.chat-bubble__speak {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--line-2);
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+.chat-bubble__speak:hover { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent); }
 .chat-bubble--loading { color: var(--ink-faint); font-style: italic; }
 .chat-bubble--error { background: #f6e3df; border-color: #e3b6ac; color: var(--danger); }
 .chat-compose {
