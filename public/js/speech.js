@@ -73,6 +73,7 @@ export class LecturePlayer {
 
   _speakCurrent() {
     if (this.i >= this.chunks.length) {
+      stopKeepalive();
       this._setState('done');
       this.onProgress(1);
       return;
@@ -102,12 +103,14 @@ export class LecturePlayer {
     if (this.state === 'done') this.i = 0;
     this._setState('playing');
     this._emitProgress();
+    startKeepalive();
     this._speakCurrent();
   }
 
   pause() {
     if (this.state !== 'playing') return;
     window.speechSynthesis.cancel();
+    stopKeepalive();
     this._setState('paused');
   }
 
@@ -125,8 +128,46 @@ export class LecturePlayer {
 
   stop() {
     window.speechSynthesis.cancel();
+    stopKeepalive();
     this._setState('idle');
   }
+}
+
+// ---------------------------------------------------------------------------
+// Silent audio keepalive — prevents the OS from suspending SpeechSynthesis
+// when the screen locks or the tab goes to the background. A 1-second silent
+// MP3 played in a loop holds the audio session open for the duration of TTS.
+// ---------------------------------------------------------------------------
+
+// Smallest valid MP3: 1 s of silence, base64-encoded.
+const SILENT_MP3 =
+  'data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjI5LjEwMAAAAAAAAAAAAAAA' +
+  '//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAADwAD////////////' +
+  '////////////////////////////////////////////////////////////////8AAAA' +
+  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
+  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/7UEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABJbmZvAAAADwAAAAIAAADAAP' +
+  '///////////////////////////////////////////////////////////////////////8AAAA' +
+  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/7UMAAAAAA2gAAAAAAAANIAAAAEAAABpAAAA';
+
+let keepaliveAudio = null;
+
+function startKeepalive() {
+  if (keepaliveAudio) return;
+  try {
+    keepaliveAudio = new Audio(SILENT_MP3);
+    keepaliveAudio.loop = true;
+    keepaliveAudio.volume = 0;
+    keepaliveAudio.play().catch(() => {});
+  } catch {
+    keepaliveAudio = null;
+  }
+}
+
+function stopKeepalive() {
+  if (!keepaliveAudio) return;
+  keepaliveAudio.pause();
+  keepaliveAudio.src = '';
+  keepaliveAudio = null;
 }
 
 /** Speak a single utterance, resolving when finished. */
@@ -138,14 +179,17 @@ export function say(text, { rate = 1.0 } = {}) {
     const v = pickVoice();
     if (v) u.voice = v;
     u.rate = rate;
-    u.onend = resolve;
-    u.onerror = resolve;
+    startKeepalive();
+    const finish = () => { stopKeepalive(); resolve(); };
+    u.onend = finish;
+    u.onerror = finish;
     window.speechSynthesis.speak(u);
   });
 }
 
 export function cancelSpeech() {
   if (ttsSupported) window.speechSynthesis.cancel();
+  stopKeepalive();
 }
 
 /**
