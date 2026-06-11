@@ -80,7 +80,7 @@ export class LecturePlayer {
     }
     const u = new SpeechSynthesisUtterance(this.chunks[this.i]);
     if (this.voice) u.voice = this.voice;
-    u.rate = 0.98;
+    u.rate = parseFloat(localStorage.getItem('figaro.speed') || '1.0') * 0.98;
     u.pitch = 1.0;
     u.onend = () => {
       if (this.state !== 'playing') return; // stopped/paused mid-way
@@ -178,7 +178,7 @@ export function say(text, { rate = 1.0 } = {}) {
     const u = new SpeechSynthesisUtterance(text);
     const v = pickVoice();
     if (v) u.voice = v;
-    u.rate = rate;
+    u.rate = rate * parseFloat(localStorage.getItem('figaro.speed') || '1.0');
     startKeepalive();
     const finish = () => { stopKeepalive(); resolve(); };
     u.onend = finish;

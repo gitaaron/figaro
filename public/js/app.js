@@ -7,9 +7,7 @@ import { mountQuiz } from './quiz.js';
 import { say, listenOnce, cancelSpeech, checkMic, ttsSupported, sttSupported } from './speech.js';
 
 const mount = document.getElementById('view');
-const providerSlot = document.getElementById('provider-slot');
-
-
+const settingsBtn = document.getElementById('settings-btn');
 
 // ---- app state ------------------------------------------------------------
 const state = {
@@ -37,8 +35,114 @@ function onlyMockAvailable() {
 let cleanup = () => {};
 function setCleanup(fn) { cleanup = fn; }
 
+// ---- settings -------------------------------------------------------------
 
-// ---- provider selector ----------------------------------------------------
+const THEMES = [
+  { id: 'pacman',       label: 'Pac-Man' },
+  { id: 'gruvbox',      label: 'Gruvbox' },
+  { id: 'dracula',      label: 'Dracula' },
+  { id: 'nord',         label: 'Nord' },
+  { id: 'solarized',    label: 'Solarized Dark' },
+  { id: 'monokai',      label: 'Monokai' },
+  { id: 'onedark',      label: 'One Dark' },
+  { id: 'catppuccin',   label: 'Catppuccin' },
+];
+
+function getTheme()  { return localStorage.getItem('figaro.theme') || 'pacman'; }
+function getSpeed()  { return parseFloat(localStorage.getItem('figaro.speed') || '1.0'); }
+
+function applyTheme(id) {
+  document.documentElement.dataset.theme = id;
+  localStorage.setItem('figaro.theme', id);
+}
+
+// Apply saved theme on load
+applyTheme(getTheme());
+
+function openSettings() {
+  if (document.getElementById('settings-overlay')) return;
+
+  const overlay = el('div', { class: 'settings-overlay', id: 'settings-overlay' });
+  const panel   = el('div', { class: 'settings-panel' });
+
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  // Header
+  panel.appendChild(el('div', { class: 'settings-header' },
+    el('span', { class: 'settings-title', text: 'Settings' }),
+    el('button', { class: 'settings-close', text: '✕', onClick: close }),
+  ));
+
+  // ── Model ──
+  panel.appendChild(el('label', { class: 'settings-label', text: 'Model' }));
+  const modelSel = el('select', { class: 'settings-select' });
+  for (const p of state.providers) {
+    modelSel.appendChild(el('option', {
+      value: p.id,
+      text: p.available ? p.label : `${p.label} — no key`,
+      disabled: !p.available,
+      selected: p.id === currentProvider(),
+    }));
+  }
+  modelSel.addEventListener('change', (e) => {
+    state.selectedProvider = e.target.value;
+    localStorage.setItem('figaro.provider', e.target.value);
+    route();
+  });
+  panel.appendChild(modelSel);
+
+  // ── Theme ──
+  panel.appendChild(el('label', { class: 'settings-label', text: 'Theme' }));
+  const themeGrid = el('div', { class: 'settings-theme-grid' });
+  for (const t of THEMES) {
+    const btn = el('button', {
+      class: 'settings-theme-btn' + (getTheme() === t.id ? ' is-active' : ''),
+      dataset: { theme: t.id },
+      text: t.label,
+      onClick: () => {
+        applyTheme(t.id);
+        themeGrid.querySelectorAll('.settings-theme-btn').forEach((b) =>
+          b.classList.toggle('is-active', b.dataset.theme === t.id)
+        );
+      },
+    });
+    themeGrid.appendChild(btn);
+  }
+  panel.appendChild(themeGrid);
+
+  // ── Playback speed ──
+  panel.appendChild(el('label', { class: 'settings-label', text: `Playback Speed` }));
+  const speedVal = el('span', { class: 'settings-speed-val', text: `${getSpeed().toFixed(1)}×` });
+  const speedRow = el('div', { class: 'settings-speed-row' },
+    el('span', { class: 'settings-speed-tick', text: '0.5×' }),
+    (() => {
+      const s = el('input', {
+        class: 'settings-speed-slider',
+        type: 'range', min: '0.5', max: '2.0', step: '0.1',
+        value: String(getSpeed()),
+      });
+      s.addEventListener('input', () => {
+        const v = parseFloat(s.value);
+        speedVal.textContent = `${v.toFixed(1)}×`;
+        localStorage.setItem('figaro.speed', String(v));
+        // Update any live audio element
+        document.querySelectorAll('audio').forEach((a) => { a.playbackRate = v; });
+      });
+      return s;
+    })(),
+    el('span', { class: 'settings-speed-tick', text: '2.0×' }),
+    speedVal,
+  );
+  panel.appendChild(speedRow);
+
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+}
+
+settingsBtn.addEventListener('click', openSettings);
+
+// ---- provider init --------------------------------------------------------
 async function initProviders() {
   try {
     const data = await api.getProviders();
@@ -51,29 +155,6 @@ async function initProviders() {
   if (!state.selectedProvider || !state.providers.some((p) => p.id === state.selectedProvider)) {
     state.selectedProvider = state.defaultProvider;
   }
-  renderProviderSelector();
-}
-
-function renderProviderSelector() {
-  clear(providerSlot);
-  const sel = el('select', {
-    title: 'Choose which model powers Figaro',
-    onChange: (e) => {
-      state.selectedProvider = e.target.value;
-      localStorage.setItem('figaro.provider', e.target.value);
-      route(); // re-render to refresh demo-mode notices
-    },
-  });
-  for (const p of state.providers) {
-    const label = p.available ? p.label : `${p.label} — no key`;
-    sel.appendChild(el('option', {
-      value: p.id,
-      text: label,
-      disabled: !p.available,
-      selected: p.id === currentProvider(),
-    }));
-  }
-  providerSlot.appendChild(sel);
 }
 
 // ---- shared bits ----------------------------------------------------------
@@ -690,6 +771,7 @@ function renderLesson(course, index) {
   const audio = new Audio();
   audio.preload = 'metadata';
   audio.src = audioUrl;
+  audio.playbackRate = getSpeed();
 
   function formatTime(s) {
     if (!isFinite(s) || s < 0) return '0:00';
