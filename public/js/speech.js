@@ -193,6 +193,22 @@ export function cancelSpeech() {
 }
 
 /**
+ * Check whether microphone access is available.
+ * Returns: 'ok' | 'permission' | 'error'
+ */
+export async function checkMic() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return 'error';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((t) => t.stop());
+    return 'ok';
+  } catch (err) {
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') return 'permission';
+    return 'error';
+  }
+}
+
+/**
  * Listen once for a spoken phrase. Resolves with the transcript string, or ''
  * on no-result / error. Returns a controller too so callers can abort.
  */
@@ -223,8 +239,14 @@ export function listenOnce({ timeout = 8000 } = {}) {
       }
       finish(best.trim());
     };
-    rec.onerror = () => finish('');
-    rec.onend = () => finish('');
+    rec.onerror = (e) => {
+      // 'no-speech' is normal — just let the timeout handle it.
+      if (e.error === 'no-speech') return;
+      finish('');
+    };
+    // onend fires after both success and failure; only use it as a fallback
+    // if we haven't already resolved via onresult/onerror.
+    rec.onend = () => { if (!done) finish(''); };
     try { rec.start(); } catch { finish(''); }
     timer = setTimeout(() => finish(''), timeout);
   });

@@ -1,10 +1,10 @@
 // quiz.js — runs a lesson quiz in either hands-free (voice) or manual mode,
 // scores it, persists the result, and shows a Coursera-style results screen.
 
-import { el, clear } from './ui.js';
+import { el, clear, showToast } from './ui.js';
 import { api } from './api.js';
 import {
-  say, listenOnce, cancelSpeech, matchAnswer, sttSupported, ttsSupported,
+  say, listenOnce, cancelSpeech, checkMic, matchAnswer, sttSupported, ttsSupported,
 } from './speech.js';
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
@@ -37,7 +37,24 @@ export function mountQuiz(mount, { course, index, navigate }) {
       el('button', {
         class: 'mode-card' + (voiceDisabled ? ' is-disabled' : ''),
         disabled: voiceDisabled,
-        onClick: () => { if (!voiceDisabled) start('voice'); },
+        onClick: () => {
+          if (voiceDisabled) return;
+          // Call getUserMedia synchronously within the click gesture so the
+          // browser shows its permission prompt in the URL bar.
+          const micPromise = navigator.mediaDevices
+            ? navigator.mediaDevices.getUserMedia({ audio: true })
+            : Promise.reject(new Error('no mediaDevices'));
+          micPromise.then((stream) => {
+            stream.getTracks().forEach((t) => t.stop());
+            start('voice');
+          }).catch((err) => {
+            if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+              showToast('Microphone is blocked. Click the lock icon in the URL bar → Site settings → Microphone → Allow, then reload.', { type: 'warn', duration: 12000 });
+            } else {
+              showToast('Could not access the microphone. Check your device settings.', { type: 'error' });
+            }
+          });
+        },
       },
         el('div', { class: 'ico', text: '🎙️' }),
         el('h3', { text: 'Answer hands-free' }),

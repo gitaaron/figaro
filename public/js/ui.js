@@ -31,6 +31,20 @@ export function clear(node) {
   return node;
 }
 
+let _toastTimer = null;
+export function showToast(msg, { type = 'error', duration = 6000 } = {}) {
+  let toast = document.getElementById('figaro-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'figaro-toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.className = `toast toast--${type} toast--visible`;
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => toast.classList.remove('toast--visible'), duration);
+}
+
 export function escapeHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;')

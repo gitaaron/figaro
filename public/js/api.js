@@ -44,6 +44,9 @@ export const api = {
   generateSuggestions: (courseId, provider) =>
     req('POST', `/api/courses/${courseId}/suggestions`, { provider }),
 
+  generateClosing: (courseId, provider) =>
+    req('POST', `/api/courses/${courseId}/closing`, { provider }),
+
   // Returns the URL to stream/download the lesson audio MP3.
   // The server generates + caches it on first request.
   lessonAudioUrl: (courseId, index) => `/api/courses/${courseId}/lessons/${index}/audio`,

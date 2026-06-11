@@ -637,6 +637,7 @@ details[open] > .lessons-summary::after { content: "▴"; }
 .review-item .ra.ok { color: var(--success); }
 .review-item .ra.no { color: var(--danger); }
 
+
 /* ---- lesson follow-up chat ---- */
 .chat-section { margin-top: 32px; margin-bottom: 14px; }
 .chat-section__heading {
@@ -759,3 +760,15 @@ details[open] > .lessons-summary::after { content: "▴"; }
   background: #f6e3df; border: 1px solid #e3b6ac; color: var(--danger);
   border-radius: var(--radius-s); padding: 12px 14px; font-size: 15px; margin-top: 14px;
 }
+
+/* Toast notification */
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(16px);
+  padding: 12px 20px; border-radius: var(--radius-s); font-size: 14px; font-weight: 500;
+  max-width: 480px; text-align: center; z-index: 9999; pointer-events: none;
+  opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.toast--visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast--error { background: #f6e3df; border: 1px solid #e3b6ac; color: var(--danger); }
+.toast--warn  { background: #fef9e6; border: 1px solid #f0d98c; color: #7a5c00; }
+.toast--info  { background: var(--accent-soft); border: 1px solid var(--line-2); color: var(--accent-ink); }

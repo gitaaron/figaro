@@ -1,10 +1,10 @@
 // app.js — application shell: provider selector, hash router, and the
 // home / assessment / course / lesson views. Quiz lives in quiz.js.
 
-import { el, clear } from './ui.js';
+import { el, clear, showToast } from './ui.js';
 import { api } from './api.js';
 import { mountQuiz } from './quiz.js';
-import { say, ttsSupported } from './speech.js';
+import { say, listenOnce, cancelSpeech, checkMic, ttsSupported, sttSupported } from './speech.js';
 
 const mount = document.getElementById('view');
 const providerSlot = document.getElementById('provider-slot');
@@ -395,7 +395,13 @@ async function eagerGenerate(course) {
     setStep(`Lesson ${i + 1} of ${total} ready`, i + 1);
   }
 
-  if (!cancelled) go(`/course/${course.id}`);
+  if (cancelled) return;
+
+  // Generate the closing message in the background — non-fatal if it fails.
+  setStep('Finishing up…', total);
+  api.generateClosing(course.id, course.provider).catch(() => {});
+
+  go(`/course/${course.id}`);
 }
 
 // ===========================================================================
@@ -777,6 +783,81 @@ function renderLesson(course, index) {
     localStorage.setItem(savedAtKey, Date.now());
     if (!scrubbing) status.textContent = audio.currentTime > 0 ? `Paused at ${formatTime(audio.currentTime)}` : 'Tap play to hear the lecture';
   });
+  const isLastLesson = index === course.lessons.length - 1;
+  let endFlowActive = false; // guard so cleanup can cancel it
+  let micCheckPromise = null; // kicked off on first play (user gesture)
+
+  async function runEndFlow() {
+    if (document.hidden || endFlowActive) return;
+    endFlowActive = true;
+
+    // For the last lesson, speak the closing message first.
+    if (isLastLesson && ttsSupported) {
+      const closing = course.closingMessage ||
+        'You have reached the end of the course. Congratulations on completing every lesson. Keep exploring and applying what you have learned.';
+      status.textContent = 'Playing closing message…';
+      await say(closing);
+      if (!endFlowActive) return;
+    }
+
+    if (!ttsSupported || !sttSupported) return; // nothing more to do without voice
+
+    const micStatus = await (micCheckPromise || checkMic());
+    if (micStatus === 'permission') {
+      showToast('Microphone is blocked. Click the lock icon in the URL bar → Site settings → Microphone → Allow, then reload.', { type: 'warn', duration: 12000 });
+      return;
+    }
+    if (micStatus === 'error') {
+      showToast('Could not access the microphone. Check your device settings.', { type: 'error' });
+      return;
+    }
+
+    const prompt = isLastLesson
+      ? 'Would you like to take the final quiz, or go back to the course overview? Say "quiz" or "course".'
+      : 'Would you like to continue to the next lesson, replay this one, or stop to take the quiz? Say "next", "replay", or "quiz".';
+
+    status.textContent = 'Listening…';
+    await say(prompt);
+    if (!endFlowActive) return;
+
+    status.textContent = 'Listening…';
+    const { promise, abort: abortListen } = listenOnce({ timeout: 8000 });
+
+    // Store abort so cleanup can cancel it.
+    const prevCleanup = cleanup;
+    setCleanup(() => { endFlowActive = false; abortListen(); prevCleanup(); });
+
+    const transcript = (await promise).toLowerCase().trim();
+    if (!endFlowActive) return;
+
+    status.textContent = transcript ? `Heard: "${transcript}"` : 'Didn\'t catch that.';
+
+    if (isLastLesson) {
+      if (/quiz|test|question/.test(transcript)) {
+        go(`/quiz/${course.id}/${index}`);
+      } else if (/course|overview|back|home/.test(transcript)) {
+        go(`/course/${course.id}`);
+      } else if (transcript) {
+        await say('Sorry, I didn\'t catch that. Head to the quiz or course overview using the buttons below.');
+      }
+    } else {
+      if (/next|continue|forward/.test(transcript)) {
+        go(`/lesson/${course.id}/${index + 1}`);
+      } else if (/replay|again|repeat|restart/.test(transcript)) {
+        endFlowActive = false;
+        status.textContent = 'Tap play to hear the lecture';
+        audio.currentTime = 0;
+        scrubber.value = '0';
+        scrubber.style.setProperty('--pct', '0%');
+        audio.play();
+      } else if (/quiz|test|question|stop/.test(transcript)) {
+        go(`/quiz/${course.id}/${index}`);
+      } else if (transcript) {
+        await say('Sorry, I didn\'t catch that. Say "next", "replay", or "quiz".');
+      }
+    }
+  }
+
   audio.addEventListener('ended', () => {
     playBtn.innerHTML = '&#9654;';
     localStorage.removeItem(posKey);
@@ -786,6 +867,7 @@ function renderLesson(course, index) {
     scrubber.value = '100';
     scrubber.style.setProperty('--pct', '100%');
     timeLeft.textContent = '';
+    runEndFlow();
   });
   audio.addEventListener('loadedmetadata', () => {
     const saved      = parseFloat(localStorage.getItem(posKey));
@@ -842,7 +924,20 @@ function renderLesson(course, index) {
     }
   });
 
-  playBtn.onclick = () => { if (audio.paused) audio.play(); else audio.pause(); };
+  playBtn.onclick = () => {
+    // Call getUserMedia synchronously within the click gesture so the browser
+    // shows its permission prompt in the URL bar. Store the promise so
+    // runEndFlow can await the result without re-requesting.
+    if (sttSupported && !micCheckPromise && navigator.mediaDevices) {
+      micCheckPromise = navigator.mediaDevices.getUserMedia({ audio: true })
+        .then((stream) => { stream.getTracks().forEach((t) => t.stop()); return 'ok'; })
+        .catch((err) => {
+          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') return 'permission';
+          return 'error';
+        });
+    }
+    if (audio.paused) audio.play(); else audio.pause();
+  };
   rewindBtn.onclick = () => {
     audio.currentTime = Math.max(0, audio.currentTime - 30);
     if (audio.paused && audio.currentTime > 0) audio.play();
@@ -871,6 +966,8 @@ function renderLesson(course, index) {
   }
 
   setCleanup(() => {
+    endFlowActive = false;
+    cancelSpeech();
     if (audio.currentTime > 0) {
       localStorage.setItem(posKey, audio.currentTime);
       localStorage.setItem(playingKey, audio.paused ? '0' : '1');

@@ -4,7 +4,7 @@ const express = require('express');
 const store = require('../store');
 const llm = require('../llm');
 const tts = require('../tts');
-const { assessmentPrompt, outlinePrompt, lessonPrompt, chatPrompt, suggestionsPrompt } = require('../prompts');
+const { assessmentPrompt, outlinePrompt, lessonPrompt, chatPrompt, suggestionsPrompt, closingPrompt } = require('../prompts');
 
 const router = express.Router();
 
@@ -138,6 +138,25 @@ router.post(
     store.writeCourse(course);
 
     res.json({ answer: answer.trim() });
+  })
+);
+
+// --- Course closing message ------------------------------------------------
+
+router.post(
+  '/courses/:id/closing',
+  wrap(async (req, res) => {
+    const course = store.readCourse(req.params.id);
+    if (!course) return res.status(404).json({ error: 'Course not found.' });
+
+    const provider = llm.resolveProvider(req.body.provider || course.provider);
+    const { system, user } = closingPrompt(course);
+    const message = await llm.chat(provider, system, user);
+
+    course.closingMessage = message.trim();
+    store.writeCourse(course);
+
+    res.json({ closingMessage: course.closingMessage });
   })
 );
 

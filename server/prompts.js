@@ -205,4 +205,27 @@ Return ONLY this JSON shape:
   return { system, user };
 }
 
-module.exports = { assessmentPrompt, outlinePrompt, lessonPrompt, chatPrompt, suggestionsPrompt, BASE_SYSTEM };
+function closingPrompt(course) {
+  const system =
+    'You are Figaro, an expert tutor and instructional designer. ' +
+    'Write flowing spoken prose only — no markdown, no headings, no bullet points. ' +
+    'This text will be read aloud by a text-to-speech voice.';
+
+  const lessonTitles = (course.lessons || []).map((l, i) => `${i + 1}. ${l.title}`).join('\n');
+
+  const user = `A learner has just finished every lesson in the course "${course.title}" on "${course.topic}" (${course.level} level).
+
+Lessons completed:
+${lessonTitles}
+
+Write a warm, encouraging closing message of 120-180 words that:
+- Congratulates the learner on finishing the course
+- Briefly recaps the two or three most important concepts they covered
+- Encourages them to apply what they have learned and keep exploring
+
+Write it as a single spoken paragraph. No JSON — just the plain text of the message.`;
+
+  return { system, user };
+}
+
+module.exports = { assessmentPrompt, outlinePrompt, lessonPrompt, chatPrompt, suggestionsPrompt, closingPrompt, BASE_SYSTEM };
