@@ -507,7 +507,7 @@ details[open] > .lessons-summary::after { content: "▴"; }
 .player__meta { flex: 1; min-width: 0; }
 .player__statusrow { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 .player__status { font-family: var(--font-body); color: var(--ink-soft); font-size: 12px; }
-.player__timeleft { font-family: var(--font-display); font-size: 10px; color: var(--ghost-cyan); font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; text-shadow: 0 0 8px var(--ghost-cyan); }
+.player__timeleft { font-family: var(--font-body); font-size: 12px; color: var(--ghost-cyan); font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; text-shadow: 0 0 8px var(--ghost-cyan); }
 
 /* Scrubber — range input styled to match the dark player aesthetic */
 .player__scrubber {

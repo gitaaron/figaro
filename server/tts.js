@@ -210,11 +210,17 @@ async function streamAudio(courseId, lessonIndex, text, expressRes) {
   const filePath = audioPath(courseId, lessonIndex);
   const provider = resolveProvider();
 
+  function serveFromDisk(res) {
+    const size = fs.statSync(filePath).size;
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Content-Length', size);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    fs.createReadStream(filePath).pipe(res);
+  }
+
   // Cache hit — serve straight from disk.
   if (isCached(filePath)) {
-    expressRes.setHeader('Content-Type', 'audio/mpeg');
-    expressRes.setHeader('Cache-Control', 'public, max-age=86400');
-    fs.createReadStream(filePath).pipe(expressRes);
+    serveFromDisk(expressRes);
     return;
   }
 
@@ -227,9 +233,7 @@ async function streamAudio(courseId, lessonIndex, text, expressRes) {
       // Generation failed for the other request; try again for this one.
     }
     if (isCached(filePath)) {
-      expressRes.setHeader('Content-Type', 'audio/mpeg');
-      expressRes.setHeader('Cache-Control', 'public, max-age=86400');
-      fs.createReadStream(filePath).pipe(expressRes);
+      serveFromDisk(expressRes);
     } else {
       expressRes.status(502).json({ error: 'Audio generation failed.' });
     }
@@ -248,7 +252,7 @@ async function streamAudio(courseId, lessonIndex, text, expressRes) {
     // gTTS: generate to disk, then stream the file.
     generationPromise = generateGtts(text, filePath).then(() => {
       if (!expressRes.writableEnded) {
-        fs.createReadStream(filePath).pipe(expressRes);
+        serveFromDisk(expressRes);
       }
     });
   } else if (provider === 'openai') {

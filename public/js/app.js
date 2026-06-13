@@ -126,8 +126,7 @@ function openSettings() {
         const v = parseFloat(s.value);
         speedVal.textContent = `${v.toFixed(1)}×`;
         localStorage.setItem('figaro.speed', String(v));
-        // Update any live audio element
-        document.querySelectorAll('audio').forEach((a) => { a.playbackRate = v; });
+        window.dispatchEvent(new StorageEvent('storage', { key: 'figaro.speed' }));
       });
       return s;
     })(),
@@ -771,7 +770,6 @@ function renderLesson(course, index) {
   const audio = new Audio();
   audio.preload = 'metadata';
   audio.src = audioUrl;
-  audio.playbackRate = getSpeed();
 
   function formatTime(s) {
     if (!isFinite(s) || s < 0) return '0:00';
@@ -852,9 +850,13 @@ function renderLesson(course, index) {
     }
   });
   audio.addEventListener('durationchange', () => { syncScrubber(); syncTimeLeft(); });
+  const onSpeedChange = (e) => { if (!e || e.key === 'figaro.speed') audio.playbackRate = getSpeed(); };
+  window.addEventListener('storage', onSpeedChange);
   audio.addEventListener('playing', () => {
+    audio.playbackRate = getSpeed();
     playBtn.innerHTML = '&#10073;&#10073;';
     status.textContent = 'Now playing\u2026';
+    syncTimeLeft();
     localStorage.setItem(playingKey, '1');
     localStorage.setItem(savedAtKey, Date.now());
   });
@@ -1044,6 +1046,7 @@ function renderLesson(course, index) {
     }
     audio.pause();
     audio.src = '';
+    window.removeEventListener('storage', onSpeedChange);
   });
 
   // --- Transcript ---
