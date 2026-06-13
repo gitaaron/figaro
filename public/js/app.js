@@ -867,8 +867,6 @@ function renderLesson(course, index) {
   });
   const isLastLesson = index === course.lessons.length - 1;
   let endFlowActive = false; // guard so cleanup can cancel it
-  let micCheckPromise = null; // kicked off on first play (user gesture)
-
   async function runEndFlow() {
     if (document.hidden || endFlowActive) return;
     endFlowActive = true;
@@ -884,7 +882,7 @@ function renderLesson(course, index) {
 
     if (!ttsSupported || !sttSupported) return; // nothing more to do without voice
 
-    const micStatus = await (micCheckPromise || checkMic());
+    const micStatus = await checkMic();
     if (micStatus === 'permission') {
       showToast('Microphone is blocked. Click the lock icon in the URL bar → Site settings → Microphone → Allow, then reload.', { type: 'warn', duration: 12000 });
       return;
@@ -1007,17 +1005,6 @@ function renderLesson(course, index) {
   });
 
   playBtn.onclick = () => {
-    // Call getUserMedia synchronously within the click gesture so the browser
-    // shows its permission prompt in the URL bar. Store the promise so
-    // runEndFlow can await the result without re-requesting.
-    if (sttSupported && !micCheckPromise && navigator.mediaDevices) {
-      micCheckPromise = navigator.mediaDevices.getUserMedia({ audio: true })
-        .then((stream) => { stream.getTracks().forEach((t) => t.stop()); return 'ok'; })
-        .catch((err) => {
-          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') return 'permission';
-          return 'error';
-        });
-    }
     if (audio.paused) audio.play(); else audio.pause();
   };
   rewindBtn.onclick = () => {
