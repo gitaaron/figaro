@@ -84,6 +84,7 @@ export function mountQuiz(mount, { course, index, navigate }) {
     let locked = answers[qi] != null;
 
     clear(mount);
+    mount.appendChild(el('a', { class: 'back', href: `#/course/${course.id}`, text: '‹ back to course' }));
     mount.appendChild(el('div', { class: 'quiz-progress', text: `Question ${qi + 1} of ${quiz.length}` }));
     mount.appendChild(el('div', { class: 'quiz-question', text: q.question }));
 
